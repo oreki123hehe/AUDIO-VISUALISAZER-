@@ -83,7 +83,7 @@ public final class TimelineView extends View {
                     paint.setColor(scene.isEnabled(id)?(id==focusLayer?0xffc6a7ff:0xff6477ca):0xff48506a);
                     c.drawRoundRect(bar,4*dp,4*dp,paint);
                 }
-                for(long key:scene.getStrengthKeyframePositions(id)) {
+                for(long key:scene.getAllKeyframePositions(id)) {
                     float kx=x(key,barStart,barWidth);
                     if(kx<barStart||kx>right)continue;
                     paint.setColor(Color.WHITE);

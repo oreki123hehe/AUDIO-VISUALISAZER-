@@ -56,6 +56,7 @@ public class MainActivity extends Activity {
     private final Button[] toggleButtons=new Button[ReactiveView.MAX_LAYERS],
             mappingButtons=new Button[ReactiveView.MAX_LAYERS];
     private final LinearLayout[] panels=new LinearLayout[ReactiveView.MAX_LAYERS];
+    private final int[] selectedKeyframeParam=new int[ReactiveView.MAX_LAYERS];
     private LinearLayout effectContainer;
     private ReactiveView reactive;
     private MediaPlayer player;
@@ -105,7 +106,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.6",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.7",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -208,7 +209,7 @@ public class MainActivity extends Activity {
         addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
         for(int id:reactive.getLayerOrder()) addEffectPanel(controls,id);
         reorderPanels();
-        TextView help=text("V1.6: waveform timeline, tambah, duplikasi, hapus, urut layer bebas (maks. 48). Audio reactive per parameter, blend/mask dan keyframe strength. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
+        TextView help=text("V1.7: waveform timeline dan keyframe 16 parameter per layer. Efek mengikuti kick/bass secara independen. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -336,22 +337,57 @@ public class MainActivity extends Activity {
         advanced.addView(material);
         addSlider(advanced,"Mask Radius",reactive.getMaskRadius(effect),value->reactive.setMaskRadius(effect,value));
         addSlider(advanced,"Arah (0=auto)",reactive.getDirection(effect),value->reactive.setDirection(effect,value));
-        TextView automationLabel=text("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect),11,PURPLE,false);
+        TextView automationLabel=text(automationSummary(effect),11,PURPLE,false);
         advanced.addView(automationLabel);
+        Button selectParam=addButton(advanced,"↔ Parameter: "+ReactiveView.KEYFRAME_NAMES[selectedKeyframeParam[effect]],v->{});
+        selectParam.setOnClickListener(v->{
+            selectedKeyframeParam[effect]=(selectedKeyframeParam[effect]+1)%ReactiveView.KEYFRAME_NAMES.length;
+            selectParam.setText("↔ Parameter: "+ReactiveView.KEYFRAME_NAMES[selectedKeyframeParam[effect]]);
+            automationLabel.setText(automationSummary(effect));
+        });
         LinearLayout keyframes=row();
-        addButton(keyframes,"+ Titik",v->{
-            reactive.addStrengthKeyframe(effect,currentPosition());
-            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));timelineView.refresh();
-        });
+        addButton(keyframes,"＋ Edit Titik",v->editKeyframe(effect,automationLabel));
         addButton(keyframes,"− Titik",v->{
-            reactive.removeStrengthKeyframe(effect,currentPosition());
-            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));timelineView.refresh();
+            reactive.removeKeyframe(effect,selectedKeyframeParam[effect],currentPosition());
+            automationLabel.setText(automationSummary(effect));timelineView.refresh();
         });
-        addButton(keyframes,"Hapus Semua",v->{
-            reactive.clearStrengthKeyframes(effect);
-            automationLabel.setText("KEYFRAME KEKUATAN: 0");timelineView.refresh();
-        });
+        addButton(keyframes,"Hapus Kurva",v->new AlertDialog.Builder(this)
+                .setTitle("Hapus seluruh keyframe parameter?")
+                .setMessage(ReactiveView.KEYFRAME_NAMES[selectedKeyframeParam[effect]])
+                .setNegativeButton("Batal",(dialog,which)->{})
+                .setPositiveButton("Hapus",(dialog,which)->{
+                    reactive.clearKeyframes(effect,selectedKeyframeParam[effect]);
+                    automationLabel.setText(automationSummary(effect));timelineView.refresh();
+                }).show());
         advanced.addView(keyframes);
+    }
+    private String automationSummary(int effect) {
+        int param=selectedKeyframeParam[effect];
+        return "KEYFRAME • "+ReactiveView.KEYFRAME_NAMES[param]+" ("+
+                reactive.keyframeCount(effect,param)+" titik) • Posisi: "+format((int)Math.min(Integer.MAX_VALUE,currentPosition()));
+    }
+    private void editKeyframe(int effect,TextView summary) {
+        final int param=selectedKeyframeParam[effect];
+        final long atMs=currentPosition();
+        EditText input=new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setSingleLine(true);
+        input.setText(String.valueOf(reactive.keyframeValueAt(effect,param,atMs)));
+        input.selectAll();
+        int min=AutomationParameters.min(param),max=AutomationParameters.max(param);
+        new AlertDialog.Builder(this)
+            .setTitle("Keyframe "+ReactiveView.KEYFRAME_NAMES[param])
+            .setMessage("Waktu "+format((int)Math.min(Integer.MAX_VALUE,atMs))+
+                    " • nilai "+min+"–"+max+". Tambah titik atau ubah titik pada posisi ini.")
+            .setView(input).setNegativeButton("Batal",(d,w)->{})
+            .setPositiveButton("Simpan",(d,w)->{
+                try {
+                    int value=Integer.parseInt(input.getText().toString().trim());
+                    if(value<min || value>max) {toast("Nilai harus "+min+"–"+max);return;}
+                    reactive.setKeyframe(effect,param,atMs,value);
+                    summary.setText(automationSummary(effect));timelineView.refresh();
+                } catch(NumberFormatException e) {toast("Masukkan angka yang valid");}
+            }).show();
     }
     private String getRangeTitle(int effect) {
         String end=reactive.getLayerEnd(effect)==Long.MAX_VALUE?"akhir lagu":

@@ -3,16 +3,23 @@ package com.ranneki.visualizer;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** Keyframe automation of a 0-100 percentage with deterministic linear interpolation. */
+/** Bounded integer keyframe automation with deterministic linear interpolation. */
 final class AutomationTrack {
     private static final int MAX_POINTS = 128;
     private final TreeMap<Long,Integer> points = new TreeMap<>();
+    private final int minValue,maxValue;
+
+    AutomationTrack(){this(0,100);}
+    AutomationTrack(int min,int max){
+        if(min>max)throw new IllegalArgumentException("Invalid automation range");
+        minValue=min;maxValue=max;
+    }
 
     int count() { return points.size(); }
     void put(long ms, int percent) {
         long position = Math.max(0, ms);
         if (!points.containsKey(position) && points.size() >= MAX_POINTS) return;
-        points.put(position, Math.max(0, Math.min(100, percent)));
+        points.put(position, Math.max(minValue, Math.min(maxValue, percent)));
     }
     void removeNear(long ms, long toleranceMs) {
         Long best = null;
@@ -57,7 +64,7 @@ final class AutomationTrack {
             try {
                 long ms = Long.parseLong(pair[0]);
                 int value = Integer.parseInt(pair[1]);
-                if (ms >= 0 && value >= 0 && value <= 100) put(ms, value);
+                if (ms >= 0 && value >= minValue && value <= maxValue) put(ms, value);
             } catch(NumberFormatException ignored) { }
         }
     }

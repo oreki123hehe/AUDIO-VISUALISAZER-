@@ -155,13 +155,12 @@ final class AacTranscoder {
                         int max=Math.min(temporary.length,buffer.remaining());
                         max-=max%bytesPerSample;
                         if(max<=0)throw new IllegalStateException("AAC encoder buffer too small");
-                        int n=in.read(temporary,0,max);
+                        int n=PcmFrameReader.readAligned(in,temporary,max,bytesPerSample);
                         long pts=FrameTimebase.audioSampleUs(frames,meta.sampleRate);
                         if(n<0) {
                             encoder.queueInputBuffer(input,0,0,pts,MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                             inputDone=true;
                         }else {
-                            n-=n%bytesPerSample;
                             buffer.put(temporary,0,n);
                             encoder.queueInputBuffer(input,0,n,pts,0);
                             frames+=n/bytesPerSample;

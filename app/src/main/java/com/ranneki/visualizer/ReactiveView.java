@@ -75,7 +75,10 @@ public final class ReactiveView extends View {
             maskRadius=new int[MAX_LAYERS], direction=new int[MAX_LAYERS];
     private final int[][] propertySource=new int[MAX_LAYERS][PROPERTY_COUNT];
     private final float[][] propertyEnvelope=new float[MAX_LAYERS][PROPERTY_COUNT];
-    private final AutomationTrack[] automation=new AutomationTrack[MAX_LAYERS];
+    public static final String[] KEYFRAME_NAMES=AutomationParameters.NAMES;
+    private final AutomationTrack[][] automation=new AutomationTrack[MAX_LAYERS][AutomationParameters.COUNT];
+    // Evaluated once per render frame rather than once per particle.
+    private final int[][] animatedValues=new int[MAX_LAYERS][AutomationParameters.COUNT];
     private long framePositionMs=0L;
     private final boolean[] enabled=new boolean[MAX_LAYERS];
     private final float[] envelope=new float[MAX_LAYERS];
@@ -172,18 +175,75 @@ public final class ReactiveView extends View {
     public void setMaskRadius(int i,int value) {maskRadius[i]=limit(value,0,100);invalidate();}
     public int getDirection(int i) {return direction[i];}
     public void setDirection(int i,int value) {direction[i]=limit(value,0,100);invalidate();}
-    public int keyframeCount(int i) {return automation[i].count();}
-    public long[] getStrengthKeyframePositions(int i) {return automation[i].positions();}
-
-    public void addStrengthKeyframe(int i,long positionMs) {
-        automation[i].put(positionMs,strength[i]);invalidate();
+    public int keyframeCount(int i) {return keyframeCount(i,AutomationParameters.STRENGTH);}
+    public long[] getStrengthKeyframePositions(int i) {return getKeyframePositions(i,AutomationParameters.STRENGTH);}
+    public int keyframeCount(int id,int param) {
+        AutomationParameters.check(param);
+        return isAllocated(id)?automation[id][param].count():0;
     }
-    public void removeStrengthKeyframe(int i,long positionMs) {
-        automation[i].removeNear(positionMs,180);invalidate();
+    public long[] getKeyframePositions(int id,int param) {
+        AutomationParameters.check(param);
+        return isAllocated(id)?automation[id][param].positions():new long[0];
     }
-    public void clearStrengthKeyframes(int i) {automation[i].clear();invalidate();}
-    public String encodeStrengthKeyframes(int i) {return automation[i].encode();}
-    public void decodeStrengthKeyframes(int i,String text) {automation[i].decode(text);invalidate();}
+    /** Aggregate keyframe markers for the timeline overview. */
+    public long[] getAllKeyframePositions(int id) {
+        if(!isAllocated(id))return new long[0];
+        java.util.TreeSet<Long> positions=new java.util.TreeSet<>();
+        for(AutomationTrack item:automation[id])for(long time:item.positions())positions.add(time);
+        long[] out=new long[positions.size()];int i=0;
+        for(long time:positions)out[i++]=time;
+        return out;
+    }
+    public int keyframeValueAt(int id,int param,long timeMs) {
+        AutomationParameters.check(param);
+        return automation[id][param].valueAt(Math.max(0,timeMs),baseValue(id,param));
+    }
+    public void setKeyframe(int id,int param,long positionMs,int value) {
+        AutomationParameters.check(param);
+        if(!isAllocated(id))return;
+        automation[id][param].put(positionMs,AutomationParameters.clamp(param,value));invalidate();
+    }
+    public void removeKeyframe(int id,int param,long positionMs) {
+        AutomationParameters.check(param);
+        if(isAllocated(id)) {automation[id][param].removeNear(positionMs,180);invalidate();}
+    }
+    public void clearKeyframes(int id,int param) {
+        AutomationParameters.check(param);
+        if(isAllocated(id)) {automation[id][param].clear();invalidate();}
+    }
+    public void addStrengthKeyframe(int id,long ms) {setKeyframe(id,AutomationParameters.STRENGTH,ms,strength[id]);}
+    public void removeStrengthKeyframe(int id,long ms) {removeKeyframe(id,AutomationParameters.STRENGTH,ms);}
+    public void clearStrengthKeyframes(int id) {clearKeyframes(id,AutomationParameters.STRENGTH);}
+    public String encodeStrengthKeyframes(int id) {return automation[id][AutomationParameters.STRENGTH].encode();}
+    public void decodeStrengthKeyframes(int id,String encoded) {
+        automation[id][AutomationParameters.STRENGTH].decode(encoded);invalidate();
+    }
+    private int baseValue(int id,int param){
+        switch(param){
+            case AutomationParameters.STRENGTH:return strength[id];
+            case AutomationParameters.SIZE:return size[id];
+            case AutomationParameters.DENSITY:return density[id];
+            case AutomationParameters.VELOCITY:return velocity[id];
+            case AutomationParameters.OPACITY:return opacity[id];
+            case AutomationParameters.X:return offsetX[id];
+            case AutomationParameters.Y:return offsetY[id];
+            case AutomationParameters.SCALE:return layerScale[id];
+            case AutomationParameters.ROTATION:return layerRotation[id];
+            case AutomationParameters.THRESHOLD:return threshold[id];
+            case AutomationParameters.ATTACK:return attackMs[id];
+            case AutomationParameters.RELEASE:return releaseMs[id];
+            case AutomationParameters.MIN_HZ:return minHz[id];
+            case AutomationParameters.MAX_HZ:return maxHz[id];
+            case AutomationParameters.MASK_RADIUS:return maskRadius[id];
+            case AutomationParameters.DIRECTION:return direction[id];
+            default:throw new IllegalArgumentException("Unknown parameter");
+        }
+    }
+    private void sampleAutomation(long timeMs){
+        for(int id:layerOrder)for(int param=0;param<AutomationParameters.COUNT;param++)
+            animatedValues[id][param]=automation[id][param].valueAt(timeMs,baseValue(id,param));
+    }
+    private int animated(int id,int param){return animatedValues[id][param];}
     public int[] getLayerOrder() {
         int[] result=new int[layerOrder.size()];
         for(int i=0;i<result.length;i++)result[i]=layerOrder.get(i);
@@ -261,7 +321,10 @@ public final class ReactiveView extends View {
             source[id]=type<EFFECT_COUNT?defaultSources[type]:2;
             enabled[id]=(type>=EFFECT_COUNT)||id<4;
             maskRadius[id]=65;direction[id]=0;blend[id]=0;mask[id]=0;
-            automation[id]=new AutomationTrack();
+            for(int param=0;param<AutomationParameters.COUNT;param++)
+                automation[id][param]=AutomationParameters.newTrack(param);
+            for(int param=0;param<AutomationParameters.COUNT;param++)
+                animatedValues[id][param]=baseValue(id,param);
             java.util.Arrays.fill(propertySource[id],-1);
             java.util.Arrays.fill(propertyEnvelope[id],0f);
             envelope[id]=0f;prevWaterLevel[id]=prevSparkLevel[id]=0f;
@@ -304,7 +367,8 @@ public final class ReactiveView extends View {
         blend[dst]=blend[src];mask[dst]=mask[src];maskRadius[dst]=maskRadius[src];
         direction[dst]=direction[src];
         System.arraycopy(propertySource[src],0,propertySource[dst],0,PROPERTY_COUNT);
-        automation[dst].decode(automation[src].encode());
+        for(int param=0;param<AutomationParameters.COUNT;param++)
+            automation[dst][param].decode(automation[src][param].encode());
         layerText[dst]=layerText[src];imageUri[dst]=imageUri[src];textColor[dst]=textColor[src];
         Bitmap b=imageLayers[src];
         if(b!=null&&!b.isRecycled())imageLayers[dst]=b.copy(Bitmap.Config.ARGB_8888,false);
@@ -318,7 +382,8 @@ public final class ReactiveView extends View {
         allocated[id]=false;layerOrder.remove(Integer.valueOf(id));
         Bitmap old=imageLayers[id];if(old!=null&&!old.isRecycled())old.recycle();
         imageLayers[id]=null;imageUri[id]=null;layerText[id]=null;
-        layerParticles[id]=null;layerRipples[id]=null;automation[id]=null;
+        layerParticles[id]=null;layerRipples[id]=null;
+        java.util.Arrays.fill(automation[id],null);
         invalidate();return true;
     }
     public boolean moveLayer(int id,int delta) {
@@ -335,7 +400,7 @@ public final class ReactiveView extends View {
     /** JSON project preset: ordered independent layer instances. */
     public String exportProjectJson() {
         try {
-            JSONObject root=new JSONObject();root.put("version",2);
+            JSONObject root=new JSONObject();root.put("version",3);
             root.put("portrait",portrait);root.put("eco",economyMode);
             root.put("spectrum",spectrumEnabled);root.put("spectrumScale",spectrumScale);
             root.put("cameraShake",cameraShake);
@@ -353,7 +418,12 @@ public final class ReactiveView extends View {
                 o.put("minHz",minHz[id]);o.put("maxHz",maxHz[id]);o.put("blend",blend[id]);
                 o.put("mask",mask[id]);o.put("maskRadius",maskRadius[id]);o.put("direction",direction[id]);
                 JSONArray routes=new JSONArray();for(int j:propertySource[id])routes.put(j);
-                o.put("routes",routes);o.put("automation",automation[id].encode());layers.put(o);
+                o.put("routes",routes);
+                // Keep old V1.6 strength field for backward compatibility.
+                o.put("automation",automation[id][AutomationParameters.STRENGTH].encode());
+                JSONArray curves=new JSONArray();
+                for(AutomationTrack curve:automation[id])curves.put(curve.encode());
+                o.put("keyframes",curves);layers.put(o);
             }
             root.put("layers",layers);return root.toString();
         }catch(Exception e){throw new IllegalStateException("Preset JSON gagal",e);}
@@ -387,7 +457,11 @@ public final class ReactiveView extends View {
                 JSONArray routes=o.optJSONArray("routes");
                 if(routes!=null)for(int k=0;k<Math.min(PROPERTY_COUNT,routes.length());k++)
                     setPropertySource(id,k,routes.optInt(k,-1));
-                automation[id].decode(o.optString("automation",""));
+                JSONArray curves=o.optJSONArray("keyframes");
+                if(curves!=null) {
+                    for(int param=0;param<Math.min(curves.length(),AutomationParameters.COUNT);param++)
+                        automation[id][param].decode(curves.optString(param,""));
+                }else automation[id][AutomationParameters.STRENGTH].decode(o.optString("automation",""));
             }
             setPortrait(root.optBoolean("portrait",true));setEconomyMode(root.optBoolean("eco",true));
             setSpectrumEnabled(root.optBoolean("spectrum",true));
@@ -441,7 +515,9 @@ public final class ReactiveView extends View {
             case 2:return clamp(live.bass*.58f+live.kick*.88f);
             case 3:return live.highs;
             case 4:return live.snare;
-            case 5:return track==null?0:track.bandAt(position,minHz[i],maxHz[i]);
+            case 5:return track==null?0:track.bandAt(position,
+                        Math.min(animated(i,AutomationParameters.MIN_HZ),animated(i,AutomationParameters.MAX_HZ)),
+                        Math.max(animated(i,AutomationParameters.MIN_HZ),animated(i,AutomationParameters.MAX_HZ)));
             case 6:return live.mids;
             default:return 0;
         }
@@ -458,6 +534,7 @@ public final class ReactiveView extends View {
         if(playing) postInvalidateDelayed(economyMode?33:16);
     }
     private void advance(long position,boolean playing,float dt) {
+        sampleAutomation(position);
         live=track==null?AudioAnalyzer.Features.zero():track.at(position);
         if(track!=null) track.spectrumAt(position,spectralBins);
         if(position<previousPosition-100) {
@@ -470,12 +547,14 @@ public final class ReactiveView extends View {
         if(playing) {
             for(int i:layerOrder) {
                 envelope[i]=ReactiveEnvelope.step(envelope[i],readSource(i,position),
-                        threshold[i]/100f,attackMs[i],releaseMs[i],dt*1000);
+                        animated(i,AutomationParameters.THRESHOLD)/100f,
+                        animated(i,AutomationParameters.ATTACK),animated(i,AutomationParameters.RELEASE),dt*1000);
                 for(int prop=0;prop<PROPERTY_COUNT;prop++) {
                     int src=propertySource[i][prop];
                     if(src>=0) propertyEnvelope[i][prop]=ReactiveEnvelope.step(
                             propertyEnvelope[i][prop],readSourceId(src,i,position),
-                            threshold[i]/100f,attackMs[i],releaseMs[i],dt*1000);
+                            animated(i,AutomationParameters.THRESHOLD)/100f,
+                        animated(i,AutomationParameters.ATTACK),animated(i,AutomationParameters.RELEASE),dt*1000);
                 }
             }
             phase+=dt;
@@ -507,11 +586,11 @@ public final class ReactiveView extends View {
             // not stale effect values from the last playback frame.
             for(int i:layerOrder) {
                 envelope[i]=ReactiveEnvelope.step(0,readSource(i,position),
-                        threshold[i]/100f,0,0,0);
+                        animated(i,AutomationParameters.THRESHOLD)/100f,0,0,0);
                 for(int prop=0;prop<PROPERTY_COUNT;prop++) {
                     int src=propertySource[i][prop];
                     propertyEnvelope[i][prop]=src<0?0:ReactiveEnvelope.step(0,
-                            readSourceId(src,i,position),threshold[i]/100f,0,0,0);
+                            readSourceId(src,i,position),animated(i,AutomationParameters.THRESHOLD)/100f,0,0,0);
                 }
             }
         }
@@ -541,9 +620,10 @@ public final class ReactiveView extends View {
             activeLayer=fx;
             int save=canvas.save();
             float centerX=200f,centerY=h*.5f;
-            canvas.translate((offsetX[fx]-50)*3.6f,(offsetY[fx]-50)*(h/100f));
-            canvas.rotate((layerRotation[fx]-50)*3.6f,centerX,centerY);
-            float factor=.25f+(layerScale[fx]/100f)*1.5f;
+            canvas.translate((animated(fx,AutomationParameters.X)-50)*3.6f,
+                    (animated(fx,AutomationParameters.Y)-50)*(h/100f));
+            canvas.rotate((animated(fx,AutomationParameters.ROTATION)-50)*3.6f,centerX,centerY);
+            float factor=.25f+(animated(fx,AutomationParameters.SCALE)/100f)*1.5f;
             canvas.scale(factor,factor,centerX,centerY);
             applyMask(canvas,fx,h);
             if(blend[fx]!=0) {
@@ -582,12 +662,12 @@ public final class ReactiveView extends View {
         switch(mask[fx]) {
             case 1:
                 clipPath.reset();
-                clipPath.addCircle(200,h*.5f,Math.max(1,maskRadius[fx]/100f*240),
+                clipPath.addCircle(200,h*.5f,Math.max(1,animated(fx,AutomationParameters.MASK_RADIUS)/100f*240),
                         Path.Direction.CW);
                 canvas.clipPath(clipPath);
                 break;
-            case 2: canvas.clipRect(0,0,400,h*maskRadius[fx]/100f);break;
-            case 3: canvas.clipRect(0,h*(1-maskRadius[fx]/100f),400,h);break;
+            case 2: canvas.clipRect(0,0,400,h*animated(fx,AutomationParameters.MASK_RADIUS)/100f);break;
+            case 3: canvas.clipRect(0,h*(1-animated(fx,AutomationParameters.MASK_RADIUS)/100f),400,h);break;
             default:break;
         }
     }
@@ -595,24 +675,24 @@ public final class ReactiveView extends View {
         return propertySource[fx][property]<0?0:propertyEnvelope[fx][property];
     }
     private float intensity(int i) {
-        return envelope[i]*automation[i].valueAt(framePositionMs,strength[i])/100f;
+        return envelope[i]*animated(i,AutomationParameters.STRENGTH)/100f;
     }
     private float volume(int i) {
-        return (.2f+size[i]/100f*1.8f)*(1+parameter(i,0)*1.1f);
+        return (.2f+animated(i,AutomationParameters.SIZE)/100f*1.8f)*(1+parameter(i,0)*1.1f);
     }
     private float amount(int i) {
         float modulation=propertySource[i][1]<0?1f:(.45f+parameter(i,1)*1.55f);
-        return Math.min(1f,density[i]/100f*(economyMode?.62f:1f)*modulation);
+        return Math.min(1f,animated(i,AutomationParameters.DENSITY)/100f*(economyMode?.62f:1f)*modulation);
     }
     private float opacity(int i) {
-        return opacity[i]/100f*(propertySource[i][3]<0?1f:(.20f+parameter(i,3)*.8f));
+        return animated(i,AutomationParameters.OPACITY)/100f*(propertySource[i][3]<0?1f:(.20f+parameter(i,3)*.8f));
     }
     private float speed(int i) {
-        return (.15f+velocity[i]/100f*2.7f)*(1+parameter(i,2)*2.2f);
+        return (.15f+animated(i,AutomationParameters.VELOCITY)/100f*2.7f)*(1+parameter(i,2)*2.2f);
     }
     private void applyWind(Particle q,int fx,float dt) {
-        if(direction[fx] == 0 || dt<=0) return;
-        double angle=(direction[fx]-1)*2*Math.PI/99;
+        if(animated(fx,AutomationParameters.DIRECTION) == 0 || dt<=0) return;
+        double angle=(animated(fx,AutomationParameters.DIRECTION)-1)*2*Math.PI/99;
         float movement=dt*speed(fx)*(.06f+intensity(fx)*.12f);
         q.x+=(float)Math.cos(angle)*movement;
         q.y+=(float)Math.sin(angle)*movement;
