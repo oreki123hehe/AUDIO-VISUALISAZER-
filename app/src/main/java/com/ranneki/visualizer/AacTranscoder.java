@@ -156,7 +156,7 @@ final class AacTranscoder {
                         max-=max%bytesPerSample;
                         if(max<=0)throw new IllegalStateException("AAC encoder buffer too small");
                         int n=in.read(temporary,0,max);
-                        long pts=frames*1_000_000L/meta.sampleRate;
+                        long pts=FrameTimebase.audioSampleUs(frames,meta.sampleRate);
                         if(n<0) {
                             encoder.queueInputBuffer(input,0,0,pts,MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                             inputDone=true;

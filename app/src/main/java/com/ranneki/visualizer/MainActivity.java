@@ -40,13 +40,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Native Android audio-reactive editor. The finished application works offline. */
 public class MainActivity extends Activity {
-    private static final int PICK_AUDIO=101, PICK_IMAGE=102, PICK_EXPORT=103;
+    private static final int PICK_AUDIO=101, PICK_IMAGE=102, PICK_EXPORT=103,
+            PICK_LAYER_IMAGE=104;
     private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
     private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
     private final ExecutorService exportWorker=Executors.newSingleThreadExecutor();
     private final AtomicBoolean exportCancel=new AtomicBoolean(false);
     private volatile boolean exporting=false;
     private Uri musicUri;
+    private int pendingImageLayer=-1;
     private int exportWidth=720,exportHeight=1280;
     private final AtomicInteger generation=new AtomicInteger();
     private Future<?> analysisTask;
@@ -232,7 +234,7 @@ public class MainActivity extends Activity {
         });
         addButton(sourceLine,"✕",v->new AlertDialog.Builder(this)
                 .setTitle("Hapus layer?")
-                .setMessage("Hapus "+ReactiveView.EFFECT_NAMES[reactive.getLayerType(effect)]+" dari scene?")
+                .setMessage("Hapus "+ReactiveView.LAYER_NAMES[reactive.getLayerType(effect)]+" dari scene?")
                 .setNegativeButton("Batal",(d,w)->{})
                 .setPositiveButton("Hapus",(d,w)->{
                     reactive.removeLayer(effect);
@@ -254,6 +256,12 @@ public class MainActivity extends Activity {
             reveal.setText(show?"⚙ Lanjutan −":"⚙ Lanjutan +");
         });
         card.addView(advanced);
+        if(reactive.getLayerType(effect)==ReactiveView.TEXT){
+            addButton(advanced,"✎ Edit Teks",v->editTextLayer(effect));
+            addButton(advanced,"◉ Warna Teks",v->editLayerColor(effect));
+        } else if(reactive.getLayerType(effect)==ReactiveView.IMAGE) {
+            addButton(advanced,"▣ Ganti Gambar",v->requestLayerImage(effect));
+        }
         TextView layoutLabel=text("TRANSFORM • tap nama layer untuk mengganti nama",11,PURPLE,true);
         advanced.addView(layoutLabel);
         addSlider(advanced,"Posisi X",reactive.getLayerX(effect),value->reactive.setLayerX(effect,value));
@@ -338,13 +346,35 @@ public class MainActivity extends Activity {
     private void moveCard(int effect,int delta) {
         if(reactive.moveLayer(effect,delta)) reorderPanels();
     }
+    private void requestLayerImage(int layer) {
+        pendingImageLayer=layer;
+        choose("image/*",PICK_LAYER_IMAGE);
+    }
+    private void editTextLayer(int layer) {
+        EditText input=new EditText(this);input.setSingleLine(false);input.setMinLines(2);
+        input.setText(reactive.getLayerText(layer));
+        new AlertDialog.Builder(this).setTitle("Edit isi teks layer")
+                .setView(input).setPositiveButton("Simpan",(d,w)->
+                        reactive.setLayerText(layer,input.getText().toString()))
+                .setNegativeButton("Batal",(d,w)->{}).show();
+    }
+    private void editLayerColor(int layer) {
+        EditText input=new EditText(this);input.setSingleLine(true);
+        input.setText(String.format(java.util.Locale.US,"#%06X",reactive.getLayerColor(layer)&0xffffff));
+        new AlertDialog.Builder(this).setTitle("Warna teks HEX (#RRGGBB)")
+                .setView(input).setPositiveButton("Ubah",(d,w)->{
+                    try{reactive.setLayerColor(layer,Color.parseColor(input.getText().toString()));}
+                    catch(Exception e){toast("Warna tidak valid");}
+                }).setNegativeButton("Batal",(d,w)->{}).show();
+    }
     private void chooseLayer() {
-        new AlertDialog.Builder(this).setTitle("Tambah layer efek")
-                .setItems(ReactiveView.EFFECT_NAMES,(dialog,type)->{
+        new AlertDialog.Builder(this).setTitle("Tambah layer")
+                .setItems(ReactiveView.LAYER_NAMES,(dialog,type)->{
                     int id=reactive.addLayer(type);
                     if(id<0){toast("Batas 48 layer; hapus sebagian layer dulu");return;}
                     reactive.setEnabled(id,true);
                     addEffectPanel(effectContainer,id);reorderPanels();
+                    if(type==ReactiveView.IMAGE)requestLayerImage(id);
                 }).show();
     }
     private void toast(String message) {Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
@@ -427,14 +457,23 @@ public class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
-        if(result!=RESULT_OK || data==null || data.getData()==null) return;
+        if(result!=RESULT_OK || data==null || data.getData()==null) {
+            if(request==PICK_LAYER_IMAGE)pendingImageLayer=-1;
+            return;
+        }
         Uri uri=data.getData();
         try {
             getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch(Exception ignored) { }
         if(request==PICK_AUDIO) loadAudio(uri);
         else if(request==PICK_IMAGE) loadImage(uri);
-        else if(request==PICK_EXPORT) exportMp4(uri);
+        else if(request==PICK_LAYER_IMAGE && pendingImageLayer>=0){
+            int layer=pendingImageLayer;pendingImageLayer=-1;
+            try {
+                if(reactive.isAllocated(layer))reactive.setLayerImage(layer,decodeImage(uri,1024),uri.toString());
+                status.setText("Gambar layer berhasil dimuat");
+            }catch(Exception e){status.setText("Gambar layer gagal: "+e.getMessage());}
+        } else if(request==PICK_EXPORT) exportMp4(uri);
     }
     private void loadAudio(Uri uri) {
         musicUri=uri;
@@ -477,26 +516,36 @@ public class MainActivity extends Activity {
             }
         });
     }
+    private Bitmap decodeImage(Uri uri,int maxDimension) throws Exception {
+        BitmapFactory.Options bounds=new BitmapFactory.Options();
+        bounds.inJustDecodeBounds=true;
+        try(InputStream in=getContentResolver().openInputStream(uri)) {
+            BitmapFactory.decodeStream(in,null,bounds);
+        }
+        if(bounds.outWidth<=0||bounds.outHeight<=0)throw new IllegalArgumentException("Gambar tidak valid");
+        int sample=1;
+        while(bounds.outWidth/sample>maxDimension || bounds.outHeight/sample>maxDimension)sample*=2;
+        BitmapFactory.Options options=new BitmapFactory.Options();
+        options.inSampleSize=sample;
+        try(InputStream in=getContentResolver().openInputStream(uri)) {
+            Bitmap bitmap=BitmapFactory.decodeStream(in,null,options);
+            if(bitmap==null)throw new IllegalArgumentException("Gambar tidak terbaca");
+            return bitmap;
+        }
+    }
     private void loadImage(Uri uri) {
         try {
-            BitmapFactory.Options bounds=new BitmapFactory.Options();
-            bounds.inJustDecodeBounds=true;
-            try(InputStream in=getContentResolver().openInputStream(uri)) {
-                BitmapFactory.decodeStream(in,null,bounds);
-            }
-            int sample=1;
-            while(bounds.outWidth/sample>2048 || bounds.outHeight/sample>2048) sample*=2;
-            BitmapFactory.Options options=new BitmapFactory.Options();
-            options.inSampleSize=sample;
-            Bitmap bitmap;
-            try(InputStream in=getContentResolver().openInputStream(uri)) {
-                bitmap=BitmapFactory.decodeStream(in,null,options);
-            }
-            if(bitmap==null) throw new IllegalArgumentException("Gambar tidak terbaca");
-            reactive.setBackdrop(bitmap);
+            reactive.setBackdrop(decodeImage(uri,2048));
             status.setText("Background terpasang. Atur mapping efek sesuai musik.");
-        } catch(Exception e) {
-            status.setText("Gambar gagal dibuka: "+e.getMessage());
+        } catch(Exception e) {status.setText("Gambar gagal dibuka: "+e.getMessage());}
+    }
+    private void restoreLayerImages(){
+        for(int id:reactive.getLayerOrder()){
+            if(reactive.getLayerType(id)!=ReactiveView.IMAGE)continue;
+            String uri=reactive.getImageUri(id);
+            if(uri==null||uri.isEmpty())continue;
+            try{reactive.setLayerImage(id,decodeImage(Uri.parse(uri),1024),uri);}
+            catch(Exception e){status.setText("Sebagian gambar preset tidak tersedia lagi");}
         }
     }
     private void togglePlay() {
@@ -516,8 +565,10 @@ public class MainActivity extends Activity {
     }
     private void preloadPresetSettings() {
         String saved=prefs.getString("projectV2",null);
-        if(saved!=null && !reactive.importProjectJson(saved))
-            status.setText("Preset lama rusak, memakai scene default");
+        if(saved!=null) {
+            if(reactive.importProjectJson(saved))restoreLayerImages();
+            else status.setText("Preset lama rusak, memakai scene default");
+        }
     }
     private void restorePreset() {
         ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
@@ -555,6 +606,7 @@ public class MainActivity extends Activity {
         renderCopy.setTrack(reactive.getTrack());
         Bitmap bg=reactive.getBackdrop();
         if(bg!=null && !bg.isRecycled())renderCopy.setBackdrop(bg.copy(Bitmap.Config.ARGB_8888,false));
+        reactive.copyImageLayersTo(renderCopy);
         renderCopy.setEconomyMode(false);
         final Uri input=musicUri;
         final int width=exportWidth,height=exportHeight;
@@ -572,6 +624,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->status.setText("Ekspor gagal: "+e.getMessage()));
             }finally {
                 Bitmap b=renderCopy.getBackdrop();if(b!=null && !b.isRecycled())b.recycle();
+                renderCopy.recycleLayerImages();
                 exporting=false;
                 runOnUiThread(()->status.setOnClickListener(null));
             }

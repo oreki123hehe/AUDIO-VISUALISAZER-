@@ -25,10 +25,16 @@ public final class ReactiveView extends View {
     public static final int DUST=0, FIRE=1, RAIN=2, WATER=3, SMOKE=4,
             SNOW=5, SPARKS=6, LIGHTNING=7, GLOW=8, GLITCH=9;
     public static final int EFFECT_COUNT=10;
+    public static final int TEXT=10, IMAGE=11;
+    public static final int LAYER_TYPE_COUNT=12;
     public static final String[] EFFECT_NAMES={
             "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
             "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
             "Cahaya • Glow", "Distorsi • Glitch"};
+    public static final String[] LAYER_NAMES={
+            "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
+            "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
+            "Cahaya • Glow", "Distorsi • Glitch", "Judul • Text", "Gambar • Image"};
     public static final String[] SOURCES={"Kick", "Bass", "Kick + Bass", "Treble",
             "Snare", "Frekuensi custom", "Mid"};
     public static final String[] PROPERTY_NAMES={"Ukuran", "Jumlah", "Kecepatan", "Opacity"};
@@ -46,6 +52,9 @@ public final class ReactiveView extends View {
     private final float[] prevWaterLevel=new float[MAX_LAYERS],prevSparkLevel=new float[MAX_LAYERS];
     private int activeLayer=0;
     private final String[] layerName=new String[MAX_LAYERS];
+    private final String[] layerText=new String[MAX_LAYERS],imageUri=new String[MAX_LAYERS];
+    private final Bitmap[] imageLayers=new Bitmap[MAX_LAYERS];
+    private final int[] textColor=new int[MAX_LAYERS];
     private final int[] offsetX=new int[MAX_LAYERS],offsetY=new int[MAX_LAYERS],
             layerScale=new int[MAX_LAYERS],layerRotation=new int[MAX_LAYERS];
     private final long[] startTimeMs=new long[MAX_LAYERS],endTimeMs=new long[MAX_LAYERS];
@@ -200,19 +209,51 @@ public final class ReactiveView extends View {
     public void clearLayerRange(int id){startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;invalidate();}
 
     public int getLayerCount() {return layerOrder.size();}
+    public String getLayerText(int id){return layerText[id];}
+    public void setLayerText(int id,String value){
+        if(isAllocated(id)&&value!=null){layerText[id]=value.substring(0,Math.min(120,value.length()));invalidate();}
+    }
+    public int getLayerColor(int id){return textColor[id];}
+    public void setLayerColor(int id,int color){textColor[id]=color;invalidate();}
+    public String getImageUri(int id){return imageUri[id];}
+    public Bitmap getLayerImage(int id){return imageLayers[id];}
+    public void setLayerImage(int id,Bitmap bitmap,String uri){
+        if(!isAllocated(id)||layerType[id]!=IMAGE)return;
+        Bitmap old=imageLayers[id];
+        if(old!=null&&old!=bitmap&&!old.isRecycled())old.recycle();
+        imageLayers[id]=bitmap;imageUri[id]=uri==null?"":uri;invalidate();
+    }
+    public void copyImageLayersTo(ReactiveView destination) {
+        int[] src=getLayerOrder(),dst=destination.getLayerOrder();
+        for(int i=0;i<Math.min(src.length,dst.length);i++){
+            Bitmap b=imageLayers[src[i]];
+            if(layerType[src[i]]==IMAGE && b!=null && !b.isRecycled())
+                destination.setLayerImage(dst[i],b.copy(Bitmap.Config.ARGB_8888,false),imageUri[src[i]]);
+        }
+    }
+    public void recycleLayerImages() {
+        for(int id=0;id<MAX_LAYERS;id++){
+            Bitmap b=imageLayers[id];
+            if(b!=null&&!b.isRecycled())b.recycle();
+            imageLayers[id]=null;
+        }
+    }
+
     public boolean isAllocated(int id) {return id>=0 && id<MAX_LAYERS && allocated[id];}
     public int addLayer(int type) {
-        if(type<0 || type>=EFFECT_COUNT)return -1;
+        if(type<0 || type>=LAYER_TYPE_COUNT)return -1;
         for(int id=0;id<MAX_LAYERS;id++) if(!allocated[id]) {
             allocated[id]=true;layerType[id]=type;layerOrder.add(id);
-            layerName[id]=EFFECT_NAMES[type];offsetX[id]=50;offsetY[id]=50;
+            layerName[id]=LAYER_NAMES[type];layerText[id]="RANNEKI";imageUri[id]="";
+            textColor[id]=Color.WHITE;offsetX[id]=50;offsetY[id]=50;
             layerScale[id]=50;layerRotation[id]=50;
             startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;
             strength[id]=80;size[id]=55;density[id]=60;opacity[id]=75;
             velocity[id]=50;threshold[id]=15;attackMs[id]=18;releaseMs[id]=165;
             minHz[id]=35;maxHz[id]=150;
             int[] defaultSources={2,1,4,0,1,3,0,4,2,0};
-            source[id]=defaultSources[type];enabled[id]=id<4;
+            source[id]=type<EFFECT_COUNT?defaultSources[type]:2;
+            enabled[id]=(type>=EFFECT_COUNT)||id<4;
             maskRadius[id]=65;direction[id]=0;blend[id]=0;mask[id]=0;
             automation[id]=new AutomationTrack();
             java.util.Arrays.fill(propertySource[id],-1);
@@ -258,6 +299,9 @@ public final class ReactiveView extends View {
         direction[dst]=direction[src];
         System.arraycopy(propertySource[src],0,propertySource[dst],0,PROPERTY_COUNT);
         automation[dst].decode(automation[src].encode());
+        layerText[dst]=layerText[src];imageUri[dst]=imageUri[src];textColor[dst]=textColor[src];
+        Bitmap b=imageLayers[src];
+        if(b!=null&&!b.isRecycled())imageLayers[dst]=b.copy(Bitmap.Config.ARGB_8888,false);
         layerName[dst]=layerName[src]+" (copy)";
         offsetX[dst]=offsetX[src];offsetY[dst]=offsetY[src];
         layerScale[dst]=layerScale[src];layerRotation[dst]=layerRotation[src];
@@ -266,6 +310,8 @@ public final class ReactiveView extends View {
     public boolean removeLayer(int id) {
         if(!isAllocated(id))return false;
         allocated[id]=false;layerOrder.remove(Integer.valueOf(id));
+        Bitmap old=imageLayers[id];if(old!=null&&!old.isRecycled())old.recycle();
+        imageLayers[id]=null;imageUri[id]=null;layerText[id]=null;
         layerParticles[id]=null;layerRipples[id]=null;automation[id]=null;
         invalidate();return true;
     }
@@ -290,7 +336,9 @@ public final class ReactiveView extends View {
             JSONArray layers=new JSONArray();
             for(int id:layerOrder) {
                 JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
-                o.put("name",layerName[id]);o.put("x",offsetX[id]);o.put("y",offsetY[id]);
+                o.put("name",layerName[id]);o.put("text",layerText[id]);
+                o.put("imageUri",imageUri[id]);o.put("textColor",textColor[id]);
+                o.put("x",offsetX[id]);o.put("y",offsetY[id]);
                 o.put("scale",layerScale[id]);o.put("rotation",layerRotation[id]);
                 o.put("startMs",startTimeMs[id]);o.put("endMs",endTimeMs[id]);
                 o.put("source",source[id]);o.put("strength",strength[id]);o.put("density",density[id]);
@@ -315,7 +363,10 @@ public final class ReactiveView extends View {
                 int id=addLayer(o.getInt("type"));
                 if(id<0)throw new IllegalStateException("Invalid layer");
                 enabled[id]=o.optBoolean("enabled",true);
-                setLayerName(id,o.optString("name",EFFECT_NAMES[layerType[id]]));
+                setLayerName(id,o.optString("name",LAYER_NAMES[layerType[id]]));
+                setLayerText(id,o.optString("text","RANNEKI"));
+                imageUri[id]=o.optString("imageUri","");
+                setLayerColor(id,o.optInt("textColor",Color.WHITE));
                 setLayerX(id,o.optInt("x",50));setLayerY(id,o.optInt("y",50));
                 setLayerScale(id,o.optInt("scale",50));setLayerRotation(id,o.optInt("rotation",50));
                 setLayerStart(id,o.optLong("startMs",0));setLayerEnd(id,o.optLong("endMs",Long.MAX_VALUE));
@@ -504,6 +555,8 @@ public final class ReactiveView extends View {
                 case LIGHTNING:drawLightning(canvas,h);break;
                 case GLOW:drawGlow(canvas,h);break;
                 case GLITCH:drawGlitch(canvas,h);break;
+                case TEXT:drawTextLayer(canvas,h);break;
+                case IMAGE:drawImageLayer(canvas,h);break;
             }
             if(blend[fx]!=0) canvas.restore();
             canvas.restoreToCount(save);
@@ -733,6 +786,33 @@ public final class ReactiveView extends View {
             c.drawRect((float)Math.sin(i*27+phase)*120+120,y,
                     Math.min(400,(float)Math.sin(i*27+phase)*120+120+width),y+1+power*3,p);
         }
+    }
+    private void drawTextLayer(Canvas c,int h) {
+        String content=layerText[activeLayer];if(content==null||content.isEmpty())return;
+        float energy=intensity(activeLayer);
+        p.setColor(textColor[activeLayer]);
+        p.setAlpha((int)(255*opacity(activeLayer)));
+        p.setTypeface(android.graphics.Typeface.create("sans-serif-black",android.graphics.Typeface.BOLD));
+        p.setTextAlign(Paint.Align.CENTER);
+        p.setTextSize((12f+volume(activeLayer)*20f)*(1+.45f*energy));
+        p.setShadowLayer(5f+energy*5,0,2,Color.BLACK);
+        String[] lines=content.split("\\n",-1);
+        float spacing=p.getTextSize()*1.18f;
+        float first=h*.5f-spacing*(lines.length-1)*.5f;
+        for(int i=0;i<lines.length && i<5;i++) c.drawText(lines[i],200,first+i*spacing,p);
+        p.clearShadowLayer();p.setTextAlign(Paint.Align.LEFT);p.setAlpha(255);
+    }
+    private void drawImageLayer(Canvas c,int h) {
+        Bitmap b=imageLayers[activeLayer];
+        if(b==null||b.isRecycled())return;
+        float power=intensity(activeLayer),s=volume(activeLayer)*(1+power*.32f);
+        float maxWidth=260*s,maxHeight=h*.55f*s;
+        float fit=Math.min(maxWidth/b.getWidth(),maxHeight/b.getHeight());
+        float bw=b.getWidth()*fit,bh=b.getHeight()*fit;
+        p.setColor(Color.WHITE);p.setAlpha((int)(255*opacity(activeLayer)));
+        c.drawBitmap(b,null,new RectF(200-bw*.5f,h*.5f-bh*.5f,
+                200+bw*.5f,h*.5f+bh*.5f),p);
+        p.setAlpha(255);
     }
     private void drawSpectrumRing(Canvas c,int h) {
         float bass=live.bass,kick=live.kick;

@@ -14,6 +14,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # v4 no longer requests the removed Android SDK 'tools' package.
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
@@ -27,9 +28,9 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,FrameTimebase}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,FrameTimebaseTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest FrameTimebaseTest; do
             java -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Assemble debug APK

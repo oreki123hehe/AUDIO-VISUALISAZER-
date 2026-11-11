@@ -19,6 +19,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private int program,texture,position,texCoord;
     private FloatBuffer points,uv;
     private int width,height;
+    private boolean textureAllocated=false;
     CanvasEncoderSurface(Surface codecSurface,int width,int height) {
         this.surface=codecSurface;this.width=width;this.height=height;
         display=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
@@ -69,7 +70,10 @@ final class CanvasEncoderSurface implements AutoCloseable {
     void submit(Bitmap frame,long ptsNs) {
         GLES20.glViewport(0,0,width,height);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D,0,frame,0);
+        if(!textureAllocated) {
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D,0,frame,0);
+            textureAllocated=true;
+        } else GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D,0,0,0,frame);
         GLES20.glUseProgram(program);
         GLES20.glEnableVertexAttribArray(position);
         GLES20.glEnableVertexAttribArray(texCoord);

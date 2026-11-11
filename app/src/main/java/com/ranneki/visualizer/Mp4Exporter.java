@@ -84,14 +84,14 @@ public final class Mp4Exporter {
             frame=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
             Canvas canvas=new Canvas(frame);
             scene.resetExport();
-            long totalFrames=(durationMs*FPS+999L)/1000;
+            long totalFrames=FrameTimebase.frameCount(durationMs,FPS);
             MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
             for(long index=0;index<totalFrames;index++) {
                 check(stop);
-                long ms=index*1000/FPS;
+                long ms=FrameTimebase.frameMillis(index,FPS);
                 canvas.drawColor(android.graphics.Color.BLACK);
                 scene.renderExportFrame(canvas,w,h,ms);
-                gl.submit(frame,index*1_000_000_000L/FPS);
+                gl.submit(frame,FrameTimebase.presentationNs(index,FPS));
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
                 if(index%FPS==0)progress.update((int)(90*index/Math.max(1,totalFrames)),"Render frame");
             }
