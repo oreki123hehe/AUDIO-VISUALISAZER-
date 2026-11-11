@@ -68,7 +68,7 @@ final class VideoFrameLayer implements Closeable {
         synchronized(guard) {
             if(cached!=null&&!cached.isRecycled())canvas.drawBitmap(cached,null,box,paint);
         }
-        if(closed||Math.abs(cachedMs-time)<95||!busy.compareAndSet(false,true))return;
+        if(closed||(cachedMs>=0&&Math.abs(cachedMs-time)<95)||!busy.compareAndSet(false,true))return;
         previewWorker.execute(()->{
             try{
                 Bitmap frame=decode(time);
