@@ -21,6 +21,7 @@ import android.provider.MediaStore;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -200,7 +201,17 @@ public class MainActivity extends Activity {
         controls.addView(card,cp);
         LinearLayout header=row();
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name=text("#"+(effect+1)+"  "+ReactiveView.EFFECT_NAMES[reactive.getLayerType(effect)],14,Color.WHITE,true);
+        TextView name=text("#"+(effect+1)+"  "+reactive.getLayerName(effect),14,Color.WHITE,true);
+        name.setOnClickListener(v->{
+            EditText input=new EditText(this);input.setSingleLine(true);
+            input.setText(reactive.getLayerName(effect));
+            new AlertDialog.Builder(this).setTitle("Ganti nama layer")
+                .setView(input).setNegativeButton("Batal",(d,w)->{})
+                .setPositiveButton("Simpan",(d,w)->{
+                    reactive.setLayerName(effect,input.getText().toString());
+                    name.setText("#"+(effect+1)+"  "+reactive.getLayerName(effect));
+                }).show();
+        });
         header.addView(name,new LinearLayout.LayoutParams(0,dp(38),1));
         toggleButtons[effect]=addButton(header,reactive.isEnabled(effect)?"ON":"OFF",v->{
             reactive.setEnabled(effect,!reactive.isEnabled(effect));
@@ -243,6 +254,19 @@ public class MainActivity extends Activity {
             reveal.setText(show?"⚙ Lanjutan −":"⚙ Lanjutan +");
         });
         card.addView(advanced);
+        TextView layoutLabel=text("TRANSFORM • tap nama layer untuk mengganti nama",11,PURPLE,true);
+        advanced.addView(layoutLabel);
+        addSlider(advanced,"Posisi X",reactive.getLayerX(effect),value->reactive.setLayerX(effect,value));
+        addSlider(advanced,"Posisi Y",reactive.getLayerY(effect),value->reactive.setLayerY(effect,value));
+        addSlider(advanced,"Skala Layer",reactive.getLayerScale(effect),value->reactive.setLayerScale(effect,value));
+        addSlider(advanced,"Rotasi Layer",reactive.getLayerRotation(effect),value->reactive.setLayerRotation(effect,value));
+        TextView rangeLabel=text("TIMELINE: "+getRangeTitle(effect),11,PURPLE,true);
+        advanced.addView(rangeLabel);
+        LinearLayout rangeRow=row();
+        addButton(rangeRow,"Mulai di sini",v->{reactive.setLayerStart(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
+        addButton(rangeRow,"Akhir di sini",v->{reactive.setLayerEnd(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
+        addButton(rangeRow,"Reset",v->{reactive.clearLayerRange(effect);rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
+        advanced.addView(rangeRow);
         addSlider(advanced,"Opacity",reactive.getOpacity(effect),value->reactive.setOpacity(effect,value));
         addSlider(advanced,"Kecepatan",reactive.getVelocity(effect),value->reactive.setVelocity(effect,value));
         addSlider(advanced,"Threshold",reactive.getThreshold(effect),value->reactive.setThreshold(effect,value));
@@ -295,6 +319,11 @@ public class MainActivity extends Activity {
             automationLabel.setText("KEYFRAME KEKUATAN: 0");
         });
         advanced.addView(keyframes);
+    }
+    private String getRangeTitle(int effect) {
+        String end=reactive.getLayerEnd(effect)==Long.MAX_VALUE?"akhir lagu":
+                format((int)Math.min(Integer.MAX_VALUE,reactive.getLayerEnd(effect)));
+        return format((int)Math.min(Integer.MAX_VALUE,reactive.getLayerStart(effect)))+" – "+end;
     }
     private String propertyTitle(int effect,int param) {
         int source=reactive.getPropertySource(effect,param);

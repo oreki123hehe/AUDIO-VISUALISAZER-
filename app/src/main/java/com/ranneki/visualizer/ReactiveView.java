@@ -45,6 +45,10 @@ public final class ReactiveView extends View {
     private final int[] layerRippleCursor=new int[MAX_LAYERS];
     private final float[] prevWaterLevel=new float[MAX_LAYERS],prevSparkLevel=new float[MAX_LAYERS];
     private int activeLayer=0;
+    private final String[] layerName=new String[MAX_LAYERS];
+    private final int[] offsetX=new int[MAX_LAYERS],offsetY=new int[MAX_LAYERS],
+            layerScale=new int[MAX_LAYERS],layerRotation=new int[MAX_LAYERS];
+    private final long[] startTimeMs=new long[MAX_LAYERS],endTimeMs=new long[MAX_LAYERS];
     private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint blendPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path reusableFlame=new Path();
@@ -175,12 +179,35 @@ public final class ReactiveView extends View {
         return result;
     }
     public int getLayerType(int index) {return layerType[index];}
+    public String getLayerName(int index) {return layerName[index];}
+    public void setLayerName(int index,String name) {
+        if(isAllocated(index)&&name!=null&&!name.trim().isEmpty()) {
+            layerName[index]=name.trim().substring(0,Math.min(60,name.trim().length()));invalidate();
+        }
+    }
+    public int getLayerX(int id){return offsetX[id];}
+    public int getLayerY(int id){return offsetY[id];}
+    public int getLayerScale(int id){return layerScale[id];}
+    public int getLayerRotation(int id){return layerRotation[id];}
+    public void setLayerX(int id,int v){offsetX[id]=limit(v,0,100);invalidate();}
+    public void setLayerY(int id,int v){offsetY[id]=limit(v,0,100);invalidate();}
+    public void setLayerScale(int id,int v){layerScale[id]=limit(v,0,100);invalidate();}
+    public void setLayerRotation(int id,int v){layerRotation[id]=limit(v,0,100);invalidate();}
+    public long getLayerStart(int id){return startTimeMs[id];}
+    public long getLayerEnd(int id){return endTimeMs[id];}
+    public void setLayerStart(int id,long ms){startTimeMs[id]=Math.max(0,ms);invalidate();}
+    public void setLayerEnd(int id,long ms){endTimeMs[id]=Math.max(0,ms);invalidate();}
+    public void clearLayerRange(int id){startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;invalidate();}
+
     public int getLayerCount() {return layerOrder.size();}
     public boolean isAllocated(int id) {return id>=0 && id<MAX_LAYERS && allocated[id];}
     public int addLayer(int type) {
         if(type<0 || type>=EFFECT_COUNT)return -1;
         for(int id=0;id<MAX_LAYERS;id++) if(!allocated[id]) {
             allocated[id]=true;layerType[id]=type;layerOrder.add(id);
+            layerName[id]=EFFECT_NAMES[type];offsetX[id]=50;offsetY[id]=50;
+            layerScale[id]=50;layerRotation[id]=50;
+            startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;
             strength[id]=80;size[id]=55;density[id]=60;opacity[id]=75;
             velocity[id]=50;threshold[id]=15;attackMs[id]=18;releaseMs[id]=165;
             minHz[id]=35;maxHz[id]=150;
@@ -231,6 +258,10 @@ public final class ReactiveView extends View {
         direction[dst]=direction[src];
         System.arraycopy(propertySource[src],0,propertySource[dst],0,PROPERTY_COUNT);
         automation[dst].decode(automation[src].encode());
+        layerName[dst]=layerName[src]+" (copy)";
+        offsetX[dst]=offsetX[src];offsetY[dst]=offsetY[src];
+        layerScale[dst]=layerScale[src];layerRotation[dst]=layerRotation[src];
+        startTimeMs[dst]=startTimeMs[src];endTimeMs[dst]=endTimeMs[src];
     }
     public boolean removeLayer(int id) {
         if(!isAllocated(id))return false;
@@ -259,6 +290,9 @@ public final class ReactiveView extends View {
             JSONArray layers=new JSONArray();
             for(int id:layerOrder) {
                 JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
+                o.put("name",layerName[id]);o.put("x",offsetX[id]);o.put("y",offsetY[id]);
+                o.put("scale",layerScale[id]);o.put("rotation",layerRotation[id]);
+                o.put("startMs",startTimeMs[id]);o.put("endMs",endTimeMs[id]);
                 o.put("source",source[id]);o.put("strength",strength[id]);o.put("density",density[id]);
                 o.put("size",size[id]);o.put("opacity",opacity[id]);o.put("velocity",velocity[id]);
                 o.put("threshold",threshold[id]);o.put("attack",attackMs[id]);o.put("release",releaseMs[id]);
@@ -281,6 +315,10 @@ public final class ReactiveView extends View {
                 int id=addLayer(o.getInt("type"));
                 if(id<0)throw new IllegalStateException("Invalid layer");
                 enabled[id]=o.optBoolean("enabled",true);
+                setLayerName(id,o.optString("name",EFFECT_NAMES[layerType[id]]));
+                setLayerX(id,o.optInt("x",50));setLayerY(id,o.optInt("y",50));
+                setLayerScale(id,o.optInt("scale",50));setLayerRotation(id,o.optInt("rotation",50));
+                setLayerStart(id,o.optLong("startMs",0));setLayerEnd(id,o.optLong("endMs",Long.MAX_VALUE));
                 setSource(id,o.optInt("source",0));setStrength(id,o.optInt("strength",80));
                 setDensity(id,o.optInt("density",60));setSize(id,o.optInt("size",55));
                 setOpacity(id,o.optInt("opacity",75));setVelocity(id,o.optInt("velocity",50));
@@ -442,9 +480,14 @@ public final class ReactiveView extends View {
         }
         drawBackground(canvas,h);
         for(int fx:layerOrder) {
-            if(!enabled[fx]) continue;
+            if(!enabled[fx] || framePositionMs<startTimeMs[fx] || framePositionMs>endTimeMs[fx]) continue;
             activeLayer=fx;
             int save=canvas.save();
+            float centerX=200f,centerY=h*.5f;
+            canvas.translate((offsetX[fx]-50)*3.6f,(offsetY[fx]-50)*(h/100f));
+            canvas.rotate((layerRotation[fx]-50)*3.6f,centerX,centerY);
+            float factor=.25f+(layerScale[fx]/100f)*1.5f;
+            canvas.scale(factor,factor,centerX,centerY);
             applyMask(canvas,fx,h);
             if(blend[fx]!=0) {
                 blendPaint.setXfermode(new PorterDuffXfermode(blendMode(fx)));
