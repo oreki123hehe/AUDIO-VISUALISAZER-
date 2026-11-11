@@ -74,7 +74,10 @@ public final class SmokeTestActivity extends Activity {
             // the entire background + effects + spectrum in the GLES framebuffer.
             android.graphics.Bitmap artwork=android.graphics.Bitmap.createBitmap(
                     96,96,android.graphics.Bitmap.Config.ARGB_8888);
-            artwork.eraseColor(0xff284471);
+            // Distinctive top/bottom halves also verify that the GPU FBO is not
+            // black or vertically inverted after H.264 encode and decode.
+            artwork.eraseColor(0xffd43b29);
+            for(int y=48;y<96;y++)for(int x=0;x<96;x++)artwork.setPixel(x,y,0xff2a46db);
             scene.setBackdrop(artwork);
             ExportProfile profile=new ExportProfile(320,568,30,75,15,10);
             String stats=Mp4Exporter.export(this,Uri.fromFile(wav),Uri.fromFile(mp4),
@@ -86,6 +89,26 @@ public final class SmokeTestActivity extends Activity {
                 throw new IllegalStateException("GPU compositor did not eliminate frame-by-frame CPU uploads: "+stats);
             if(!mp4.exists() || mp4.length()<4096)
                 throw new IllegalStateException("MP4 not written");
+            android.media.MediaMetadataRetriever pixels=new android.media.MediaMetadataRetriever();
+            try{
+                pixels.setDataSource(mp4.getAbsolutePath());
+                android.graphics.Bitmap decoded=pixels.getFrameAtTime(200000,
+                        android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if(decoded==null)throw new IllegalStateException("Cannot decode GPU FBO video frame");
+                try{
+                    long tr=0,tb=0,br=0,bb=0;int n=0;
+                    for(int x=40;x<decoded.getWidth()-40;x+=40){
+                        int top=decoded.getPixel(x,Math.max(1,decoded.getHeight()/6));
+                        int bottom=decoded.getPixel(x,Math.min(decoded.getHeight()-2,decoded.getHeight()*4/5));
+                        tr+=android.graphics.Color.red(top);tb+=android.graphics.Color.blue(top);
+                        br+=android.graphics.Color.red(bottom);bb+=android.graphics.Color.blue(bottom);n++;
+                    }
+                    if(n==0 || tr<=tb+12L*n || bb<=br+12L*n)
+                        throw new IllegalStateException("GPU FBO pixels black/inverted; top red "+tr+
+                                "/"+tb+" bottom blue "+bb+"/"+br);
+                }finally{decoded.recycle();}
+            }finally{pixels.release();}
+
             MediaExtractor extractor=new MediaExtractor();
             try {
                 extractor.setDataSource(mp4.getAbsolutePath());
