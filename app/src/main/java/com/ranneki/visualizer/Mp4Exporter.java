@@ -176,10 +176,11 @@ public final class Mp4Exporter {
             if(vid==aud)throw new IllegalStateException("MP4 audio/video track collision");
             ex.selectTrack(vid);
             ByteBuffer buffer=ByteBuffer.allocateDirect(1024*1024);
-            int videoCount=0;long lastVideoUs=0;
+            int videoCount=0;long lastVideoUs=0,firstVideoUs=-1;
             for(;videoCount<2_000_000;videoCount++) {
                 buffer.clear();int n=ex.readSampleData(buffer,0);
                 if(n<0)break;
+                if(firstVideoUs<0)firstVideoUs=ex.getSampleTime();
                 lastVideoUs=Math.max(lastVideoUs,ex.getSampleTime());
                 ex.advance();
             }
@@ -188,9 +189,17 @@ public final class Mp4Exporter {
                 throw new IllegalStateException("Video terpotong sebelum akhir ekspor");
             ex.unselectTrack(vid);ex.selectTrack(aud);
             ex.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC);
-            buffer.clear();
-            if(ex.readSampleData(buffer,0)<0)
-                throw new IllegalStateException("MP4 tidak memiliki sample audio");
+            long firstAudioUs=-1,lastAudioUs=-1;
+            int audioCount=0;
+            for(;audioCount<2_000_000;audioCount++) {
+                buffer.clear();int n=ex.readSampleData(buffer,0);
+                if(n<0)break;
+                if(firstAudioUs<0)firstAudioUs=ex.getSampleTime();
+                lastAudioUs=Math.max(lastAudioUs,ex.getSampleTime());
+                ex.advance();
+            }
+            if(audioCount==0)throw new IllegalStateException("MP4 tidak memiliki sample audio");
+            AvSyncWindow.validate(firstVideoUs,lastVideoUs,firstAudioUs,lastAudioUs,durationMs);
         } finally {ex.release();}
     }
 
