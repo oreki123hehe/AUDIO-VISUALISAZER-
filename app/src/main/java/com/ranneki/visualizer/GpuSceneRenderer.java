@@ -33,7 +33,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "vec2 uv=mix(uCrop.xy,uCrop.zw,p);"+
             "vec4 tex=texture2D(uImage,uv);"+
             "gl_FragColor=vec4(mix(tex.rgb,vec3(.0235,.043,.125),.47),tex.a*.86);}";
-    private static final String SPRITE_VERTEX="attribute vec2 aCorner;"+
+    private static final String SPRITE_VERTEX="precision mediump float;attribute vec2 aCorner;"+
             "uniform vec4 uSceneRect;uniform vec2 uSize,uShift,uRot,uCamera;"+
             "uniform float uScale,uDesignH;varying vec2 vUV,vDesign;"+
             "void main(){vec2 center=vec2(200.0,uDesignH*0.5);"+

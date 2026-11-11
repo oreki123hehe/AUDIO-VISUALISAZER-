@@ -10,11 +10,12 @@ final class GpuSceneFrame {
     final float[] spectrum;
     final boolean fastPath, spectrumEnabled;
     final int spectrumScale;
-    final float kick, bass, shakeX, shakeY;
+    final float kick, bass, snare,treble,shakeX, shakeY;
+    final String fragmentShader;
     final Item[] drawOrder;
     GpuSceneFrame(GpuEffectFrame effects, Bitmap backdrop, float[] spectrum,
             boolean fastPath, boolean spectrumEnabled, int spectrumScale, float kick, float bass,
-            float shakeX,float shakeY,Item[] drawOrder) {
+            float snare,float treble,float shakeX,float shakeY,String fragmentShader,Item[] drawOrder) {
         this.effects=effects;
         this.backdrop=backdrop;
         this.spectrum=spectrum.clone();
@@ -24,6 +25,7 @@ final class GpuSceneFrame {
         this.kick=kick;
         this.bass=bass;
         this.shakeX=shakeX;this.shakeY=shakeY;
+        this.snare=snare;this.treble=treble;this.fragmentShader=fragmentShader;
         this.drawOrder=drawOrder.clone();
     }
     static final class Item {

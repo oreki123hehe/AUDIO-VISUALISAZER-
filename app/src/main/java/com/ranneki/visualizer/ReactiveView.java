@@ -191,7 +191,8 @@ public final class ReactiveView extends View {
                     blend[id],mask[id],animated(id,AutomationParameters.MASK_RADIUS)/100f,poly)));
         }
         return new GpuSceneFrame(fx,backdrop,spectralBins,gpuOnlyAt(framePositionMs),
-                spectrumEnabled,spectrumScale,live.kick,live.bass,cameraShakeX(),cameraShakeY(),
+                spectrumEnabled,spectrumScale,live.kick,live.bass,live.snare,live.highs,
+                cameraShakeX(),cameraShakeY(),shaderSource,
                 drawOrder.toArray(new GpuSceneFrame.Item[0]));
     }
     /** Advances audio/automation without allocating a full-screen CPU canvas. */

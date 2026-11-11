@@ -22,7 +22,9 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
     private final AtomicLong drawNs=new AtomicLong();
     private GpuParticleRenderer gpu;
     private GpuSceneRenderer compositor;
+    private GpuPreviewPostFx postFx;
     private int width,height;
+    private String lastShader=ShaderSource.CLASSIC;
     GpuPreviewView(Context context,ReactiveView source){
         super(context);this.scene=source;
         setEGLContextClientVersion(2);
@@ -41,6 +43,8 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
         try {
             gpu=new GpuParticleRenderer();
             compositor=new GpuSceneRenderer();
+            postFx=new GpuPreviewPostFx(scene.getShaderSource());
+            lastShader=scene.getShaderSource();
             rendererName=GLES20.glGetString(GLES20.GL_VENDOR)+" / "+GLES20.glGetString(GLES20.GL_RENDERER);
             available=true;error="";
             new Handler(Looper.getMainLooper()).post(()->scene.setGpuPreviewActive(true));
@@ -60,11 +64,15 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
         if(!available||gpu==null||snapshot==null)return;
         try {
             long started=System.nanoTime();
-            if(snapshot.fastPath)compositor.begin(snapshot,width,height,false);
-            int rendered=snapshot.fastPath
-                    ?compositor.composite(snapshot,gpu,width,height,false,()->scene.postInvalidate())
-                    :gpu.draw(snapshot.effects,width,height);
-            if(snapshot.fastPath)compositor.spectrum(snapshot,width,height);
+            compositor.begin(snapshot,width,height,true);
+            int rendered=compositor.composite(snapshot,gpu,width,height,false,()->scene.postInvalidate());
+            compositor.spectrum(snapshot,width,height);
+            compositor.end();
+            if(!snapshot.fragmentShader.equals(lastShader)){
+                try{postFx.update(snapshot.fragmentShader);lastShader=snapshot.fragmentShader;}
+                catch(RuntimeException err){error="Preview shader: "+err.getMessage();}
+            }
+            postFx.draw(compositor.texture(),width,height,snapshot);
             drawNs.addAndGet(System.nanoTime()-started);
             frames.incrementAndGet();points.addAndGet(rendered);
         } catch(RuntimeException e){
@@ -81,5 +89,12 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
                 "\nGPU compositor: "+(compositor==null?"not initialized":compositor.stats())+
                 "\nTiming measures CPU-side GLES submission, not hardware shader execution.";
     }
-    void detach(){scene.setGpuFrameListener(null);scene.setGpuPreviewActive(false);}
+    void detach(){
+        scene.setGpuFrameListener(null);scene.setGpuPreviewActive(false);
+        try{queueEvent(()->{
+            if(postFx!=null){postFx.close();postFx=null;}
+            if(compositor!=null){compositor.close();compositor=null;}
+            if(gpu!=null){gpu.close();gpu=null;}
+        });}catch(IllegalStateException ignored){}
+    }
 }
