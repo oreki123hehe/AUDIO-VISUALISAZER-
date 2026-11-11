@@ -16,7 +16,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private android.opengl.EGLContext context=EGL14.EGL_NO_CONTEXT;
     private android.opengl.EGLSurface window=EGL14.EGL_NO_SURFACE;
     private final Surface surface;
-    private int program,texture,position,texCoord;
+    private int program,texture,position,texCoord,pulseUniform,chromaticUniform,vignetteUniform;
     private FloatBuffer points,uv;
     private int width,height;
     private boolean textureAllocated=false;
@@ -40,7 +40,18 @@ final class CanvasEncoderSurface implements AutoCloseable {
         String vertex="attribute vec4 aPosition; attribute vec2 aTex; varying vec2 vTex;"+
                 "void main(){ gl_Position=aPosition; vTex=aTex; }";
         String fragment="precision mediump float; varying vec2 vTex; uniform sampler2D uTexture;"+
-                "void main(){ gl_FragColor=texture2D(uTexture,vTex); }";
+                "uniform float uPulse; uniform float uChromatic; uniform float uVignette;"+
+                "void main(){"+
+                "vec2 uv=clamp(vTex,vec2(0.0),vec2(1.0));"+
+                "vec2 dir=uv-vec2(0.5);"+
+                "vec2 shift=dir*(0.012*uChromatic)*(0.4+uPulse);"+
+                "float r=texture2D(uTexture,clamp(uv+shift,vec2(0.0),vec2(1.0))).r;"+
+                "float g=texture2D(uTexture,uv).g;"+
+                "float b=texture2D(uTexture,clamp(uv-shift,vec2(0.0),vec2(1.0))).b;"+
+                "float edge=clamp(dot(dir,dir)*1.65,0.0,1.0);"+
+                "float fade=1.0-uVignette*edge*0.60;"+
+                "gl_FragColor=vec4(vec3(r,g,b)*fade*(1.0+uPulse*0.055),1.0);"+
+                "}";
         int vs=shader(GLES20.GL_VERTEX_SHADER,vertex),fs=shader(GLES20.GL_FRAGMENT_SHADER,fragment);
         program=GLES20.glCreateProgram();GLES20.glAttachShader(program,vs);GLES20.glAttachShader(program,fs);
         GLES20.glLinkProgram(program);int[] ok=new int[1];GLES20.glGetProgramiv(program,GLES20.GL_LINK_STATUS,ok,0);
@@ -48,6 +59,9 @@ final class CanvasEncoderSurface implements AutoCloseable {
         if(ok[0]==0)throw new IllegalStateException("Encoder shader link failed");
         position=GLES20.glGetAttribLocation(program,"aPosition");
         texCoord=GLES20.glGetAttribLocation(program,"aTex");
+        pulseUniform=GLES20.glGetUniformLocation(program,"uPulse");
+        chromaticUniform=GLES20.glGetUniformLocation(program,"uChromatic");
+        vignetteUniform=GLES20.glGetUniformLocation(program,"uVignette");
         points=floats(new float[]{-1,-1,1,-1,-1,1,1,1});
         // GLUtils uploads Android Bitmap with its top row at the texture's bottom.
         uv=floats(new float[]{0,1,1,1,0,0,1,0});
@@ -67,7 +81,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         int[] ok=new int[1];GLES20.glGetShaderiv(shader,GLES20.GL_COMPILE_STATUS,ok,0);
         if(ok[0]==0)throw new IllegalStateException("Shader compile failed");return shader;
     }
-    void submit(Bitmap frame,long ptsNs) {
+    void submit(Bitmap frame,long ptsNs,float pulse,float chromatic,float vignette) {
         GLES20.glViewport(0,0,width,height);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
         if(!textureAllocated) {
@@ -75,6 +89,9 @@ final class CanvasEncoderSurface implements AutoCloseable {
             textureAllocated=true;
         } else GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D,0,0,0,frame);
         GLES20.glUseProgram(program);
+        GLES20.glUniform1f(pulseUniform,Math.max(0f,Math.min(1f,pulse)));
+        GLES20.glUniform1f(chromaticUniform,Math.max(0f,Math.min(1f,chromatic)));
+        GLES20.glUniform1f(vignetteUniform,Math.max(0f,Math.min(1f,vignette)));
         GLES20.glEnableVertexAttribArray(position);
         GLES20.glEnableVertexAttribArray(texCoord);
         points.position(0);uv.position(0);

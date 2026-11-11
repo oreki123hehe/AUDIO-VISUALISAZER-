@@ -46,3 +46,21 @@ for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParameters
 - `AutomationParametersTest` checks parameter-specific limits, independent curves and serialization; `PcmFrameReaderTest` verifies incomplete input reads cannot drop half a sample frame. Existing FFT, envelope, timebase and timeline tests remain.
 - Build on GitHub Actions validates compilation and pure-Java tests, **not** H.264/AAC runtime operation on the Poco F6.
 - No new install is required until the user chooses to test a release candidate.
+
+## V1.8: GPU post FX, export profiles and real-device performance diagnostics
+
+- Export options: 540p/720p/1080p, 30 fps; experimental 1080p at 60 fps if H.264 codec capabilities allow it.
+- Internal Canvas raster can be 65–100% of target resolution and GPU (GLES 2.0) upscales the final encoded frame; at reduced quality the tradeoff is visible softness.
+- New GPU fragment shader handles audio-reactive RGB channel separation, vignette and a restrained bass/kick pulse on the final image. **The scene and particles remain Canvas-rendered on CPU**: this is not yet a fully GPU-native particle renderer.
+- Export pipeline reports measured CPU render time, EGL GPU upload/swap time, throughput FPS, recent frame-time p95, thermal *severity* (not temperature in Celsius), Java heap usage and final MP4 size.
+- The **Performa** and **Benchmark** controls allow collection of actual preview frame timings after installation; benchmark plays 15 s of music with the screen open. Copy the report from the dialog.
+- Safety improvements: verify output MP4 has video and audio samples, reject unsupported H.264 output profiles before rendering, and delete newly created empty/partial SAF documents on failed copy.
+- Offline CI checks cover `FrameMetrics` and `ExportProfile`. Build success is **not** a Poco F6 performance measurement. CPU/GPU, thermals and FPS on that specific phone must be tested with the installed app.
+
+### Testing matrix for Poco F6 (requires the physical phone)
+
+1. Ensure battery > 40%, disconnect charging, remove battery-saver mode; let device cool to ambient.
+2. Open a consistent 60 s local MP3/WAV and a background image. Keep default effects and compare preview benchmark in ECO 30 FPS vs 60 FPS.
+3. Export 30 s from the same project in 720p/30, 1080p/30 full, 1080p/30 efficient and (if supported) 1080p/60. Note real wall-clock throughput, p95 frame-time, Android thermal severity, output file size, and battery consumption. Stop if Android reports CRITICAL or worse, or the device becomes too hot to hold.
+4. Verify MP4 on a separate video player: opening frames, audio onset sync, drop alignment, correct final duration, and no black frames or silent ending.
+5. Copy the **Performa** report so regression between versions is measurable. CI/emulator cannot establish actual Poco F6 temperature or FPS.

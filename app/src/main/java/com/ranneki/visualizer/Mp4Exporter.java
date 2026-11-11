@@ -8,6 +8,7 @@ import android.media.MediaCodecInfo;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.os.Build;
 import android.net.Uri;
 import android.view.Surface;
 import java.io.File;
@@ -20,20 +21,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Offline MP4 pipeline: Canvas -> H.264 Surface encoder -> MP4 + source AAC audio. */
 public final class Mp4Exporter {
     public interface Progress { void update(int percent,String stage); }
-    private static final int FPS=30;
     private Mp4Exporter() {}
-    public static void export(Context context, Uri audio, Uri target, ReactiveView scene,
-            int width,int height,int durationMs,AtomicBoolean cancelled,Progress progress) throws Exception {
-        if(width<=0||height<=0||durationMs<=0||scene.getTrack()==null)
+    public static String export(Context context, Uri audio, Uri target, ReactiveView scene,
+            ExportProfile profile,int durationMs,AtomicBoolean cancelled,Progress progress) throws Exception {
+        if(profile==null||durationMs<=0||scene.getTrack()==null)
             throw new IllegalArgumentException("Scene / durasi / analisis audio belum siap");
-        if(width%2!=0||height%2!=0)throw new IllegalArgumentException("Ukuran video harus genap");
         File video=File.createTempFile("ranneki-video-",".mp4",context.getCacheDir());
         File rendered=File.createTempFile("ranneki-final-",".mp4",context.getCacheDir());
         File convertedAudio=null;
+        FrameMetrics frameMetrics=new FrameMetrics();
+        ThermalInfo thermal=new ThermalInfo(context);
+        thermal.sample();
+        long startedNs=System.nanoTime();
+        long finalFileBytes=0L;
         try {
             check(cancelled);
             progress.update(0,"Render frame");
-            encodeVideo(video,scene,width,height,durationMs,cancelled,progress);
+            encodeVideo(video,scene,profile,durationMs,cancelled,progress,frameMetrics,thermal);
             check(cancelled);
             progress.update(91,"Menyiapkan audio");
             AudioExtractor audioProbe=new AudioExtractor(context,audio);
@@ -47,15 +51,34 @@ public final class Mp4Exporter {
             progress.update(96,"Menggabungkan audio & video");
             mux(rendered,video,context,audioUri,convertedAudio,durationMs,cancelled);
             check(cancelled);
+            validateMuxedMp4(rendered,durationMs);
+            finalFileBytes=rendered.length();
             // Export document is written only when the MP4 is complete.
+            boolean transferred=false;
             try(InputStream in=new FileInputStream(rendered);
                     OutputStream out=context.getContentResolver().openOutputStream(target,"w")) {
                 if(out==null)throw new IllegalStateException("File tujuan tidak bisa ditulis");
                 byte[] buffer=new byte[256*1024];int n;
                 while((n=in.read(buffer))!=-1){check(cancelled);out.write(buffer,0,n);}
-                out.flush();
+                out.flush();transferred=true;
+            } finally {
+                if(!transferred) {
+                    // The SAF document was freshly created; do not leave a broken MP4 behind.
+                    try { context.getContentResolver().delete(target,null,null); }
+                    catch(Exception ignored) { }
+                }
             }
             progress.update(100,"Selesai");
+            Runtime runtime=Runtime.getRuntime();
+            long usedMb=(runtime.totalMemory()-runtime.freeMemory())/(1024*1024);
+            long elapsedNs=System.nanoTime()-startedNs;
+            return "RENDER PERFORMANCE REPORT\n"+
+                    Build.MANUFACTURER+" "+Build.MODEL+" / Android "+Build.VERSION.RELEASE+"\n"+
+                    "Output "+profile.width+"x"+profile.height+" @ "+profile.fps+" FPS"+
+                    " | internal "+profile.rasterWidth()+"x"+profile.rasterHeight()+"\n"+
+                    frameMetrics.summary(elapsedNs)+"\n"+
+                    "Thermal peak: "+ThermalInfo.label(thermal.peak())+" (OS severity; not °C)\n"+
+                    "App Java heap in use: "+usedMb+" MB | final MP4: "+finalFileBytes/(1024*1024)+" MB";
         }finally {
             video.delete();rendered.delete();
             if(convertedAudio!=null)convertedAudio.delete();
@@ -65,35 +88,51 @@ public final class Mp4Exporter {
         if(stop.get() || Thread.currentThread().isInterrupted())
             throw new InterruptedException("Ekspor dibatalkan");
     }
-    private static void encodeVideo(File dest,ReactiveView scene,int w,int h,long durationMs,
-            AtomicBoolean stop,Progress progress) throws Exception {
+    private static void encodeVideo(File dest,ReactiveView scene,ExportProfile profile,long durationMs,
+            AtomicBoolean stop,Progress progress,FrameMetrics metrics,ThermalInfo thermal) throws Exception {
+        int w=profile.width,h=profile.height,fps=profile.fps;
         MediaCodec encoder=null;MediaMuxer muxer=null;CanvasEncoderSurface gl=null;
-        Bitmap frame=null;boolean muxerStarted=false;int track=-1;
+        Bitmap frame=null;boolean muxerStarted=false;
         try {
             MediaFormat format=MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC,w,h);
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            format.setInteger(MediaFormat.KEY_BIT_RATE,Math.max(1800000,w*h*5));
-            format.setInteger(MediaFormat.KEY_FRAME_RATE,FPS);
+            format.setInteger(MediaFormat.KEY_BIT_RATE,profile.bitrate());
+            format.setInteger(MediaFormat.KEY_FRAME_RATE,fps);
             format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,2);
             encoder=MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            MediaCodecInfo.VideoCapabilities capabilities=encoder.getCodecInfo()
+                    .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).getVideoCapabilities();
+            if(!capabilities.areSizeAndRateSupported(w,h,fps))
+                throw new IllegalArgumentException("Encoder H.264 tidak mendukung "+w+"x"+h+" @"+fps+" FPS");
             encoder.configure(format,null,null,MediaCodec.CONFIGURE_FLAG_ENCODE);
             Surface surface=encoder.createInputSurface();
             gl=new CanvasEncoderSurface(surface,w,h);
             encoder.start();
             muxer=new MediaMuxer(dest.getAbsolutePath(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-            frame=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+            frame=Bitmap.createBitmap(profile.rasterWidth(),profile.rasterHeight(),Bitmap.Config.ARGB_8888);
             Canvas canvas=new Canvas(frame);
             scene.resetExport();
-            long totalFrames=FrameTimebase.frameCount(durationMs,FPS);
+            long totalFrames=FrameTimebase.frameCount(durationMs,fps);
             MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
             for(long index=0;index<totalFrames;index++) {
                 check(stop);
-                long ms=FrameTimebase.frameMillis(index,FPS);
-                canvas.drawColor(android.graphics.Color.BLACK);
-                scene.renderExportFrame(canvas,w,h,ms);
-                gl.submit(frame,FrameTimebase.presentationNs(index,FPS));
+                long ms=FrameTimebase.frameMillis(index,fps);
+                long renderStart=System.nanoTime();
+                scene.renderExportFrame(canvas,frame.getWidth(),frame.getHeight(),ms);
+                long renderTime=System.nanoTime()-renderStart;
+                AudioAnalyzer.Features f=scene.getTrack().at(ms);
+                float pulse=Math.min(1f,f.kick*.75f+f.bass*.25f);
+                long submitStart=System.nanoTime();
+                gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
+                        profile.chromaticPercent/100f,profile.vignettePercent/100f);
+                metrics.record(renderTime,System.nanoTime()-submitStart);
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
-                if(index%FPS==0)progress.update((int)(90*index/Math.max(1,totalFrames)),"Render frame");
+                if(index%fps==0) {
+                    // Let Android protect the device before thermal throttling becomes critical.
+                    if(thermal.sample()>=4)
+                        throw new IllegalStateException("Android melaporkan suhu kritis; ekspor dihentikan demi keamanan perangkat");
+                    progress.update((int)(90*index/Math.max(1,totalFrames)),"Render frame");
+                }
             }
             encoder.signalEndOfInputStream();
             muxerStarted=drain(encoder,muxer,info,true,muxerStarted);
@@ -105,6 +144,34 @@ public final class Mp4Exporter {
             if(muxer!=null){if(muxerStarted)try{muxer.stop();}catch(Exception ignored){}muxer.release();}
         }
     }
+    /** Verify both tracks actually exist before exposing the MP4 as a finished export. */
+    private static void validateMuxedMp4(File file,long durationMs) throws Exception {
+        MediaExtractor ex=new MediaExtractor();
+        try {
+            ex.setDataSource(file.getAbsolutePath());
+            int vid=findTrack(ex,"video/");
+            int aud=findTrack(ex,"audio/");
+            if(vid==aud)throw new IllegalStateException("MP4 audio/video track collision");
+            ex.selectTrack(vid);
+            ByteBuffer buffer=ByteBuffer.allocateDirect(1024*1024);
+            int videoCount=0;long lastVideoUs=0;
+            for(;videoCount<2_000_000;videoCount++) {
+                buffer.clear();int n=ex.readSampleData(buffer,0);
+                if(n<0)break;
+                lastVideoUs=Math.max(lastVideoUs,ex.getSampleTime());
+                ex.advance();
+            }
+            if(videoCount==0)throw new IllegalStateException("MP4 tidak memiliki frame video");
+            if(durationMs>1000 && lastVideoUs<(durationMs-700)*1000L)
+                throw new IllegalStateException("Video terpotong sebelum akhir ekspor");
+            ex.unselectTrack(vid);ex.selectTrack(aud);
+            ex.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC);
+            buffer.clear();
+            if(ex.readSampleData(buffer,0)<0)
+                throw new IllegalStateException("MP4 tidak memiliki sample audio");
+        } finally {ex.release();}
+    }
+
     private static boolean drain(MediaCodec encoder,MediaMuxer muxer,MediaCodec.BufferInfo info,
             boolean eos,boolean started) throws Exception {
         int idle=0;

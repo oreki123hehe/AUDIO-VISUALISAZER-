@@ -95,6 +95,17 @@ public final class ReactiveView extends View {
     private float phase=0;
     private AudioAnalyzer.Features live=AudioAnalyzer.Features.zero();
     private long exportPreviousMs=-1;
+    private FrameMetrics previewMetrics=new FrameMetrics();
+    private long previewMetricsStartNs=0L;
+    /** Measured on the actual Android device, not a synthetic FPS estimate. */
+    public void resetPreviewStats() {
+        previewMetrics=new FrameMetrics();
+        previewMetricsStartNs=0L;
+    }
+    public String previewReport(){
+        long elapsed=previewMetricsStartNs==0L?0L:System.nanoTime()-previewMetricsStartNs;
+        return previewMetrics.summary(elapsed);
+    }
 
     private static final class Particle {
         float x,y,vx,vy,r,alpha;
@@ -480,6 +491,7 @@ public final class ReactiveView extends View {
     }
     public void resetExport() {
         exportPreviousMs=-1;phase=0f;lastKickEvent=-999;previousPosition=-1;
+        rng.setSeed(14350L); // Same project + audio => same initial particles between exports.
         for(int id:layerOrder) {
             envelope[id]=0;java.util.Arrays.fill(propertyEnvelope[id],0f);
             prevWaterLevel[id]=prevSparkLevel[id]=0;
@@ -524,6 +536,7 @@ public final class ReactiveView extends View {
     }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        long beginNs=System.nanoTime();
         long now=SystemClock.elapsedRealtime();
         float dt=lastDraw==0?0f:Math.min(.05f,(now-lastDraw)/1000f);
         lastDraw=now;
@@ -531,6 +544,8 @@ public final class ReactiveView extends View {
         boolean playing=clock!=null && clock.playing() && track!=null;
         advance(position,playing,dt);
         render(canvas,getWidth(),getHeight(),playing?dt:0f);
+        if(previewMetricsStartNs==0L)previewMetricsStartNs=beginNs;
+        if(playing)previewMetrics.record(System.nanoTime()-beginNs,0);
         if(playing) postInvalidateDelayed(economyMode?33:16);
     }
     private void advance(long position,boolean playing,float dt) {

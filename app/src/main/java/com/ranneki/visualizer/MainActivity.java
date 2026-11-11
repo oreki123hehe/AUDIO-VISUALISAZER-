@@ -50,6 +50,9 @@ public class MainActivity extends Activity {
     private Uri musicUri;
     private int pendingImageLayer=-1;
     private int exportWidth=720,exportHeight=1280;
+    private int exportFps=30,exportRasterPercent=75;
+    private int gpuChromatic=35,gpuVignette=22;
+    private String lastExportReport="Belum ada hasil render.\nJalankan ekspor untuk mengukur performa perangkat asli.";
     private final AtomicInteger generation=new AtomicInteger();
     private Future<?> analysisTask;
     private final Handler ui=new Handler(Looper.getMainLooper());
@@ -123,6 +126,8 @@ public class MainActivity extends Activity {
         });
         addButton(commandsRow,"▤ Simpan PNG",v->saveImage());
         addButton(commandsRow,"● Export MP4",v->chooseExport());
+        addButton(commandsRow,"◷ Performa",v->showPerformance());
+        addButton(commandsRow,"◷ Benchmark",v->benchmarkPreview());
         addButton(commandsRow,"✓ Preset",v->savePreset());
         root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
 
@@ -206,10 +211,12 @@ public class MainActivity extends Activity {
         controls.addView(spectrumControls);
         addSlider(controls,"Ukuran Spectrum",reactive.getSpectrumScale(),value->reactive.setSpectrumScale(value));
         addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
+        addSlider(controls,"GPU RGB Glitch Ekspor",gpuChromatic,value->gpuChromatic=value);
+        addSlider(controls,"GPU Vignette Ekspor",gpuVignette,value->gpuVignette=value);
         addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
         for(int id:reactive.getLayerOrder()) addEffectPanel(controls,id);
         reorderPanels();
-        TextView help=text("V1.7: waveform timeline dan keyframe 16 parameter per layer. Efek mengikuti kick/bass secara independen. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
+        TextView help=text("V1.8: waveform timeline dan keyframe 16 parameter per layer. Efek mengikuti kick/bass secara independen. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -644,10 +651,14 @@ public class MainActivity extends Activity {
     private void chooseExport() {
         if(musicUri==null || !analyzed) {toast("Impor lagu dan tunggu analisis dulu");return;}
         if(exporting) {toast("Ekspor sedang berjalan");return;}
-        String[] sizes={"540p • Hemat baterai", "720p • Seimbang", "1080p • Berat"};
-        new AlertDialog.Builder(this).setTitle("Ekspor MP4 • 30 FPS")
+        String[] sizes={"540p 30FPS • Cepat", "720p 30FPS • Seimbang", 
+                "1080p 30FPS • Kualitas penuh", "1080p 30FPS • Hemat 65%", 
+                "1080p 60FPS • Eksperimental (berat)"};
+        new AlertDialog.Builder(this).setTitle("Ekspor MP4 • GPU post FX")
                 .setSingleChoiceItems(sizes,1,(dialog,which)->{
                     int shortSide=which==0?540:which==1?720:1080;
+                    exportFps=which==4?60:30;
+                    exportRasterPercent=which==0?100:which==1?75:which==2?100:which==3?65:75;
                     exportWidth=reactive.isPortrait()?shortSide:shortSide*16/9;
                     exportHeight=reactive.isPortrait()?shortSide*16/9:shortSide;
                     dialog.dismiss();
@@ -673,17 +684,19 @@ public class MainActivity extends Activity {
         reactive.copyImageLayersTo(renderCopy);
         renderCopy.setEconomyMode(false);
         final Uri input=musicUri;
-        final int width=exportWidth,height=exportHeight;
         final int length=durationMs;
+        final ExportProfile profile=new ExportProfile(exportWidth,exportHeight,exportFps,
+                exportRasterPercent,gpuChromatic,gpuVignette);
         status.setText("Ekspor MP4 dimulai — tekan status untuk membatalkan");
         status.setOnClickListener(v->{if(exporting){exportCancel.set(true);status.setText("Membatalkan ekspor...");}});
         exportWorker.execute(()->{
             try {
-                Mp4Exporter.export(getApplicationContext(),input,outputUri,renderCopy,
-                        width,height,length,exportCancel,(progress,stage)->{
+                String report=Mp4Exporter.export(getApplicationContext(),input,outputUri,renderCopy,
+                        profile,length,exportCancel,(progress,stage)->{
                             runOnUiThread(()->status.setText(stage+" "+progress+"% • ketuk untuk batal"));
                         });
-                runOnUiThread(()->{status.setText("MP4 tersimpan: video H.264 + audio AAC");toast("Video berhasil diekspor");});
+                lastExportReport=report;
+                runOnUiThread(()->{status.setText("MP4 tersimpan: H.264 + AAC | ketuk Performa untuk laporan");toast("Video berhasil diekspor");});
             }catch(Exception e){
                 runOnUiThread(()->status.setText("Ekspor gagal: "+e.getMessage()));
             }finally {
@@ -694,6 +707,45 @@ public class MainActivity extends Activity {
             }
         });
     }
+    /** Actual device metrics require running the app; no Poco F6 hardware is available in CI. */
+    private void benchmarkPreview() {
+        if(player==null || !analyzed) {toast("Impor dan analisis musik dulu");return;}
+        if(exporting) {toast("Tunggu ekspor selesai");return;}
+        try {
+            player.seekTo(0);player.start();playButton.setText("⏸ Pause");
+        }catch(Exception ex) {toast("Gagal mulai benchmark: "+ex.getMessage());return;}
+        reactive.resetPreviewStats();
+        toast("Benchmark preview 15 detik — jangan pindah aplikasi");
+        ui.postDelayed(()->{
+            if(isFinishing()||isDestroyed())return;
+            try {if(player!=null)player.pause();}catch(Exception ignored){}
+            playButton.setText("▶ Play");
+            showPerformance();
+        },15000);
+    }
+
+    private void showPerformance() {
+        Runtime runtime=Runtime.getRuntime();
+        long used=(runtime.totalMemory()-runtime.freeMemory())/(1024*1024);
+        ThermalInfo probe=new ThermalInfo(this);probe.sample();
+        String summary="MODEL: "+Build.MANUFACTURER+" "+Build.MODEL+"\n"+
+                "Android: "+Build.VERSION.RELEASE+"\n"+
+                "Thermal status: "+ThermalInfo.label(probe.peak())+"\n"+
+                "Java heap used: "+used+" MB\n\n"+
+                "PREVIEW (saat musik diputar)\n"+reactive.previewReport()+
+                "\n\nLAST EXPORT\n"+lastExportReport+
+                "\n\nCatatan: status termal tidak menunjukkan suhu °C. " +
+                "Angka nyata hanya valid setelah dijalankan di perangkat.";
+        new AlertDialog.Builder(this).setTitle("Ranneki • Performance")
+                .setMessage(summary)
+                .setPositiveButton("Salin laporan",(d,w)->{
+                    android.content.ClipboardManager clipboard=
+                            (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Ranneki diagnostics",summary));
+                    toast("Laporan disalin");
+                }).setNegativeButton("Tutup",(d,w)->{}).show();
+    }
+
     private void saveImage() {
         try {
             int w=reactive.isPortrait()?720:1280;
