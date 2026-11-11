@@ -14,13 +14,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # GitHub Ubuntu hosted runners already include Android SDK + sdkmanager.
-      # setup-android@v3 attempted to install the removed legacy 'tools' package.
-      - name: Install supported Android SDK packages
-        shell: bash
-        run: |
-          command -v sdkmanager
-          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      # v4 no longer requests the removed Android SDK 'tools' package.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Install Android build packages
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
