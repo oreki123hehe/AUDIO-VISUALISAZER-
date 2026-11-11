@@ -103,15 +103,17 @@ public final class ReactiveView extends View {
     private long exportPreviousMs=-1;
     private boolean inExportFrame=false;
     private FrameMetrics previewMetrics=new FrameMetrics();
+    private PreviewPacing previewPacing=new PreviewPacing();
     private long previewMetricsStartNs=0L;
     /** Measured on the actual Android device, not a synthetic FPS estimate. */
     public void resetPreviewStats() {
         previewMetrics=new FrameMetrics();
+        previewPacing.reset();
         previewMetricsStartNs=0L;
     }
     public String previewReport(){
         long elapsed=previewMetricsStartNs==0L?0L:System.nanoTime()-previewMetricsStartNs;
-        return previewMetrics.summary(elapsed);
+        return previewMetrics.summary(elapsed)+"\n"+previewPacing.summary();
     }
 
     private static final class Particle {
@@ -596,7 +598,7 @@ public final class ReactiveView extends View {
         advance(position,playing,dt);
         render(canvas,getWidth(),getHeight(),playing?dt:0f);
         if(previewMetricsStartNs==0L)previewMetricsStartNs=beginNs;
-        if(playing)previewMetrics.record(System.nanoTime()-beginNs,0);
+        if(playing){previewMetrics.record(System.nanoTime()-beginNs,0);previewPacing.record(beginNs);}
         if(playing) postInvalidateDelayed(economyMode?33:16);
     }
     private void advance(long position,boolean playing,float dt) {

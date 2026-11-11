@@ -1,6 +1,6 @@
-# Ranneki Visualizer Studio — Android V1.8 performance candidate
+# Ranneki Visualizer Studio — Integrated Release Candidate
 
-Native Java Android visualizer. Offline rendering and analysis on the device (no server, Termux, internet, or API required at runtime). Target phone Poco F6. This is an **experimental build, not yet field-tested on a device**.
+Native Java Android visualizer. Offline rendering and analysis on the device (no server, Termux, internet, or API required at runtime). Target phone Poco F6. This is an **experimental release candidate, not yet field-tested on a Poco F6**.
 
 ## V1.7 foundation
 
@@ -102,3 +102,7 @@ The analyzer estimates an approximate song tempo (70–190 BPM) from detected tr
 **Remaining hard limit:** a fully GPU-native compositor for every masked/blended/keyframed particle and true high-quality drum/vocal stem separation are substantially larger subsystems. Current particle layers still use CPU Canvas, with GPU shader post-processing for export. No physical Poco F6 benchmark has been taken.
 
 - Final MP4 validation now scans both video and AAC sample timestamps, detecting gross start/end drift, missing audio, and truncated tracks. This is a technical timestamp check, **not** a replacement for listening to the rendered file on the Poco F6.
+
+- On-device preview reports now include **observed Canvas draw FPS and p95 frame-gap** for actual rendered frames. This is more meaningful than counting Choreographer callbacks, but is not a GPU profiler or measurement from a phone until the app is installed and tested.
+
+- The obsolete AndroidX `androidTest` test source has been retired. The debug-only emulator smoke activity is the maintained end-to-end test and requires no AndroidX/JUnit runtime dependency.
