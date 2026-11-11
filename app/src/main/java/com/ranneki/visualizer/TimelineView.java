@@ -16,6 +16,7 @@ public final class TimelineView extends View {
     private final RectF bar=new RectF();
     private ReactiveView scene;
     private float[] peaks=new float[0];
+    private long[] beats=new long[0];
     private long durationMs=0,positionMs=0;
     private float zoom=1f;
     private long windowStartMs=0;
@@ -57,6 +58,7 @@ public final class TimelineView extends View {
     public void setPosition(long ms){positionMs=Math.max(0,ms);invalidate();}
     public void setTrack(AudioAnalyzer.Track track){
         peaks=track==null?new float[0]:track.waveformPeaks(360);
+        beats=track==null?new long[0]:track.beatPositions();
         invalidate();
     }
     public void setFocusLayer(int id){focusLayer=id;invalidate();}
@@ -79,6 +81,14 @@ public final class TimelineView extends View {
         paint.setColor(0xffb8c6e9);paint.setTextSize(11*dp);
         c.drawText("WAVEFORM • x"+((int)zoom)+" • geser playhead / lane",left,14*dp,paint);
         float mid=44*dp, amp=23*dp;
+        paint.setColor(0xff394666);paint.setStrokeWidth(.65f*dp);
+        int markers=0;
+        for(long beat:beats){
+            if(beat<windowStartMs)continue;
+            if(beat>windowStartMs+windowDuration()||markers++>220)break;
+            float px=x(beat,left,span);
+            c.drawLine(px,22*dp,px,68*dp,paint);
+        }
         if(peaks.length>0) {
             paint.setStrokeWidth(Math.max(1f,span/Math.max(1,peaks.length)*.83f));
             paint.setColor(0xff9788fa);

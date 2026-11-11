@@ -28,9 +28,9 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest; do
             java -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Assemble debug APK

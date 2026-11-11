@@ -618,7 +618,9 @@ public class MainActivity extends Activity {
                     reactive.setTrack(result);
                     timelineView.setTrack(result);
                     analyzed=true;
-                    status.setText("Siap! Efek mengikuti musik. Pilih sumber di tiap layer.");
+                    status.setText("Siap! Audio dianalisis"+(result.estimatedBpm()>0?
+                            " • tempo perkiraan "+result.estimatedBpm()+" BPM":"")+
+                            ". Efek tetap mengikuti sinyal audio asli.");
                     Toast.makeText(this,"Analisis audio selesai",Toast.LENGTH_SHORT).show();
                 });
             } catch(Exception e) {

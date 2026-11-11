@@ -40,8 +40,8 @@ public final class SmokeTestActivity extends Activity {
         },"ranneki-smoke-test").start();
     }
     private String runPipeline() throws Exception {
-        File wav=new File(getCacheDir(),"smoke-2sec.wav");
-        File mp4=new File(getCacheDir(),"smoke-2sec.mp4");
+        File wav=new File(getFilesDir(),"smoke-2sec.wav");
+        File mp4=new File(getFilesDir(),"smoke-2sec.mp4");
         try {
             writeWav(wav,2,44100);
             AudioAnalyzer.Track track=AudioAnalyzer.analyze(this,Uri.fromFile(wav));
@@ -83,7 +83,7 @@ public final class SmokeTestActivity extends Activity {
             try{
                 scene.renderExportFrame(new android.graphics.Canvas(preview),320,568,500);
             }finally{preview.recycle();scene.closeVideoLayers();}
-            File archive=new File(getCacheDir(),"ranneki-smoke-project.zip");
+            File archive=new File(getFilesDir(),"ranneki-smoke-project.zip");
             try {
                 ProjectBundle.save(this,Uri.fromFile(archive),scene.exportProjectJson(),
                         Uri.fromFile(wav),null);

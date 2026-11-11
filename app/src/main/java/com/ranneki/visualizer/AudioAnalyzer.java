@@ -39,9 +39,15 @@ public final class AudioAnalyzer {
         private final long[] timestamps;
         private final Features[] features;
         private final float[][] spectrum;
+        private final BeatGrid beatGrid;
         private Track(long[] timestamps, Features[] features, float[][] spectrum) {
             this.timestamps=timestamps; this.features=features; this.spectrum=spectrum;
+            float[] kick=new float[features.length],snare=new float[features.length];
+            for(int i=0;i<features.length;i++){kick[i]=features[i].kick;snare[i]=features[i].snare;}
+            beatGrid=BeatGrid.detect(timestamps,kick,snare);
         }
+        public int estimatedBpm(){return beatGrid.bpm();}
+        public long[] beatPositions(){return beatGrid.positions();}
         /** Timeline overview from normalized analysis frames (not decoded PCM).
          * Peak pooling preserves short kick/transient spikes without extra decoding. */
         public float[] waveformPeaks(int columns) {

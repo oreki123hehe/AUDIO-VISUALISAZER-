@@ -87,3 +87,7 @@ GitHub Actions can establish that the Android project compiles and the pure Java
 ### Remaining engineering work
 
 A fully GLES-native GPU particle engine, arbitrary user-written GLSL shaders, sample-accurate stem separation, an unlimited multitrack NLE, low-latency hardware video decoding, and 60 FPS sustained Poco F6 benchmarks remain unfinished. The Android app has not been installed on the physical Poco F6. Successful CI builds or emulator codecs must not be mistaken for real-device thermals, smoothness or final playback quality.
+
+### Beat grid (experimental)
+
+The analyzer estimates an approximate song tempo (70–190 BPM) from detected transients and draws beat-grid markers over the zoomable waveform. This improves timeline navigation but cannot separate musical stems or guarantee BPM for half-time, syncopated, ambient, or heavily distorted music. Effects continue following measured FFT/onset activity; no artificial beat substitutes for the source audio.
