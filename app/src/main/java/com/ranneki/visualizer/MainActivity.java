@@ -132,6 +132,7 @@ public class MainActivity extends Activity {
         addButton(commandsRow,"◷ Performa",v->showPerformance());
         addButton(commandsRow,"◷ Preview 15s",v->benchmarkPreview());
         addButton(commandsRow,"▣ Benchmark MP4 8s",v->runBenchmark());
+        addButton(commandsRow,"⚙ Poco F6 • 3 profil",v->runPocoBenchmark());
         addButton(commandsRow,"✓ Preset",v->savePreset());
         addButton(commandsRow,"⇧ Simpan File Preset",v->createProjectFile());
         addButton(commandsRow,"⇩ Buka File Preset",v->choose("application/json",PICK_PRESET_OPEN));
@@ -986,6 +987,73 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->status.setOnClickListener(null));
             }
         });
+    }
+
+    /** Three real H264/AAC hardware workloads on the phone; no fake Snapdragon scores. */
+    private void runPocoBenchmark() {
+        if(musicUri==null||!analyzed||reactive.getTrack()==null||durationMs<8000) {
+            toast("Impor dan analisis musik minimal 8 detik terlebih dahulu");return;
+        }
+        if(exporting){toast("Ekspor sedang berjalan");return;}
+        if(player!=null)try{player.pause();playButton.setText("▶ Play");}catch(Exception ignored){}
+        ReactiveView scene=new ReactiveView(this);
+        if(!scene.importProjectJson(reactive.exportProjectJson())){
+            status.setText("Benchmark gagal: proyek tidak valid");return;
+        }
+        scene.setTrack(reactive.getTrack());
+        Bitmap original=reactive.getBackdrop();
+        if(original!=null&&!original.isRecycled())scene.setBackdrop(original.copy(Bitmap.Config.ARGB_8888,false));
+        reactive.copyImageLayersTo(scene);
+        try{reactive.copyVideoLayersTo(scene);}catch(Exception err){
+            scene.recycleLayerImages();scene.closeVideoLayers();
+            status.setText("Media benchmark tidak tersedia: "+err.getMessage());return;
+        }
+        scene.setEconomyMode(false);
+        exporting=true;exportCancel.set(false);
+        final Uri input=musicUri;
+        final int startBattery=batteryPercent();
+        status.setText("Benchmark Poco F6: 3 ekspor GPU • ketuk untuk batal");
+        status.setOnClickListener(v->{exportCancel.set(true);status.setText("Menghentikan uji performa...");});
+        exportWorker.execute(()->{
+            StringBuilder report=new StringBuilder("RANNEKI ON-DEVICE GPU BENCHMARK\n")
+                    .append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
+                    .append(" / Android ").append(android.os.Build.VERSION.RELEASE)
+                    .append("\nWorkloads: 8 seconds each, original soundtrack, real MediaCodec H.264/AAC\n");
+            try{
+                for(int index=0;index<PocoBenchmarkPlan.CASES.length;index++){
+                    Mp4Exporter.check(exportCancel);
+                    final PocoBenchmarkPlan.Case benchmark=PocoBenchmarkPlan.CASES[index];
+                    final int run=index+1;
+                    report.append("\n# ").append(run).append(' ').append(benchmark.label).append('\n');
+                    try{
+                        String result=Mp4Exporter.benchmark(getApplicationContext(),input,scene,
+                                benchmark.profile(),8000,exportCancel,(percent,stage)->
+                                    runOnUiThread(()->status.setText("GPU "+run+"/3 "+stage+" "+percent+"% • ketuk batal")));
+                        report.append(result).append('\n');
+                    }catch(InterruptedException interrupted){throw interrupted;}
+                    catch(Exception err){
+                        report.append("SKIPPED/FAILED: ").append(err.getMessage()).append('\n');
+                    }
+                }
+            }catch(InterruptedException ignored){report.append("\nCancelled by user.\n");}
+            finally{
+                report.append("Battery before: ").append(startBattery).append("% / after: ")
+                        .append(batteryPercent()).append("% (Android estimate)\n");
+                lastExportReport=report.toString();
+                Bitmap bg=scene.getBackdrop();if(bg!=null&&!bg.isRecycled())bg.recycle();
+                scene.recycleLayerImages();scene.closeVideoLayers();
+                exporting=false;
+                runOnUiThread(()->{
+                    status.setOnClickListener(null);
+                    status.setText("Uji GPU selesai • Performa untuk laporan (salin)");
+                    showPerformance();
+                });
+            }
+        });
+    }
+    private int batteryPercent(){
+        android.os.BatteryManager battery=(android.os.BatteryManager)getSystemService(BATTERY_SERVICE);
+        return battery==null?-1:battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
     }
 
     /** Actual device metrics require running the app; no Poco F6 hardware is available in CI. */

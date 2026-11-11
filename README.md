@@ -123,3 +123,9 @@ The analyzer estimates an approximate song tempo (70–190 BPM) from detected tr
 - Diagnostics now display real Android GLES vendor/renderer and how many GPU particles were submitted. Displayed average GLES submission time does **not** equal actual shader execution time.
 - Known limitation: particle pass currently composites **after** non-effect layers; mixing foreground images/text between FX layers can change z-order relative to legacy Canvas. This is not yet a GPU-only entire scene compositor, and hardware video decoding still depends on Android.
 - Emulator integration test now exercises all 10 GPU FX families including polygon mask and blend. Successful emulator tests cannot establish thermal performance on physical Poco F6.
+
+### One-tap physical Poco F6 test (available after APK installation)
+
+- Import an original local song >= 8 seconds, allow analysis, and tap **Poco F6 • 3 profil**. The app exports three 8-second workloads to temporary MP4 (720p30 quality, 1080p30 quality, 1080p60 balanced); each requires real Android codec support. Reports include system manufacturer/model, the detected GLES GPU, draw/upload wall clock, video+audio mux throughput, peak Android thermal severity, output size and battery estimate. Temporary files are deleted. A profile that fails is labeled failed, not passed; user can cancel by tapping the status line.
+- Run the separate **Preview 15s** test to measure visible UI frame pacing; the GLES overlay report includes the GPU renderer's identity and submission statistics. For stable measurements disconnect the charger, cool down the phone, and use the same 60s source across versions.
+- **No physical Poco F6 has been connected to this build environment. These are test instruments, not claimed hardware benchmark results.**
