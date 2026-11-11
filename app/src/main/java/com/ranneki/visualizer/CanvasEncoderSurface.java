@@ -19,8 +19,9 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private int program,texture,position,texCoord,pulseUniform,chromaticUniform,vignetteUniform,textureUniform;
     private FloatBuffer points,uv;
     private int width,height;
+    private int timeUniform,kickUniform,bassUniform,snareUniform,trebleUniform,resolutionUniform;
     private boolean textureAllocated=false;
-    CanvasEncoderSurface(Surface codecSurface,int width,int height) {
+    CanvasEncoderSurface(Surface codecSurface,int width,int height,String fragmentSource) {
         this.surface=codecSurface;this.width=width;this.height=height;
         display=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
         if(display==EGL14.EGL_NO_DISPLAY)throw new IllegalStateException("EGL display unavailable");
@@ -39,30 +40,24 @@ final class CanvasEncoderSurface implements AutoCloseable {
         if(!EGL14.eglMakeCurrent(display,window,window,context))throw new IllegalStateException("EGL makeCurrent failed");
         String vertex="attribute vec4 aPosition; attribute vec2 aTex; varying vec2 vTex;"+
                 "void main(){ gl_Position=aPosition; vTex=aTex; }";
-        String fragment="precision mediump float; varying vec2 vTex; uniform sampler2D uTexture;"+
-                "uniform float uPulse; uniform float uChromatic; uniform float uVignette;"+
-                "void main(){"+
-                "vec2 uv=clamp(vTex,vec2(0.0),vec2(1.0));"+
-                "vec2 dir=uv-vec2(0.5);"+
-                "vec2 shift=dir*(0.012*uChromatic)*(0.4+uPulse);"+
-                "float r=texture2D(uTexture,clamp(uv+shift,vec2(0.0),vec2(1.0))).r;"+
-                "float g=texture2D(uTexture,uv).g;"+
-                "float b=texture2D(uTexture,clamp(uv-shift,vec2(0.0),vec2(1.0))).b;"+
-                "float edge=clamp(dot(dir,dir)*1.65,0.0,1.0);"+
-                "float fade=1.0-uVignette*edge*0.60;"+
-                "gl_FragColor=vec4(vec3(r,g,b)*fade*(1.0+uPulse*0.055),1.0);"+
-                "}";
+        String fragment=ShaderSource.validate(fragmentSource);
         int vs=shader(GLES20.GL_VERTEX_SHADER,vertex),fs=shader(GLES20.GL_FRAGMENT_SHADER,fragment);
         program=GLES20.glCreateProgram();GLES20.glAttachShader(program,vs);GLES20.glAttachShader(program,fs);
         GLES20.glLinkProgram(program);int[] ok=new int[1];GLES20.glGetProgramiv(program,GLES20.GL_LINK_STATUS,ok,0);
         GLES20.glDeleteShader(vs);GLES20.glDeleteShader(fs);
-        if(ok[0]==0)throw new IllegalStateException("Encoder shader link failed");
+        if(ok[0]==0)throw new IllegalStateException("GPU shader link failed: "+GLES20.glGetProgramInfoLog(program));
         position=GLES20.glGetAttribLocation(program,"aPosition");
         texCoord=GLES20.glGetAttribLocation(program,"aTex");
         pulseUniform=GLES20.glGetUniformLocation(program,"uPulse");
         chromaticUniform=GLES20.glGetUniformLocation(program,"uChromatic");
         vignetteUniform=GLES20.glGetUniformLocation(program,"uVignette");
         textureUniform=GLES20.glGetUniformLocation(program,"uTexture");
+        timeUniform=GLES20.glGetUniformLocation(program,"uTime");
+        kickUniform=GLES20.glGetUniformLocation(program,"uKick");
+        bassUniform=GLES20.glGetUniformLocation(program,"uBass");
+        snareUniform=GLES20.glGetUniformLocation(program,"uSnare");
+        trebleUniform=GLES20.glGetUniformLocation(program,"uTreble");
+        resolutionUniform=GLES20.glGetUniformLocation(program,"uResolution");
         points=floats(new float[]{-1,-1,1,-1,-1,1,1,1});
         // GLUtils uploads Android Bitmap with its top row at the texture's bottom.
         uv=floats(new float[]{0,1,1,1,0,0,1,0});
@@ -80,9 +75,12 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private static int shader(int kind,String src) {
         int shader=GLES20.glCreateShader(kind);GLES20.glShaderSource(shader,src);GLES20.glCompileShader(shader);
         int[] ok=new int[1];GLES20.glGetShaderiv(shader,GLES20.GL_COMPILE_STATUS,ok,0);
-        if(ok[0]==0)throw new IllegalStateException("Shader compile failed");return shader;
+        if(ok[0]==0) {String why=GLES20.glGetShaderInfoLog(shader);GLES20.glDeleteShader(shader);
+            throw new IllegalStateException("GPU GLSL compile failed: "+why);}
+        return shader;
     }
-    void submit(Bitmap frame,long ptsNs,float pulse,float chromatic,float vignette) {
+    void submit(Bitmap frame,long ptsNs,float pulse,float chromatic,float vignette,
+            float timeSeconds,AudioAnalyzer.Features audio) {
         GLES20.glViewport(0,0,width,height);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
         if(!textureAllocated) {
@@ -93,6 +91,12 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glUniform1f(pulseUniform,Math.max(0f,Math.min(1f,pulse)));
         GLES20.glUniform1f(chromaticUniform,Math.max(0f,Math.min(1f,chromatic)));
         GLES20.glUniform1f(vignetteUniform,Math.max(0f,Math.min(1f,vignette)));
+        GLES20.glUniform1f(timeUniform,timeSeconds);
+        GLES20.glUniform1f(kickUniform,audio.kick);
+        GLES20.glUniform1f(bassUniform,audio.bass);
+        GLES20.glUniform1f(snareUniform,audio.snare);
+        GLES20.glUniform1f(trebleUniform,audio.highs);
+        GLES20.glUniform2f(resolutionUniform,width,height);
         GLES20.glEnableVertexAttribArray(position);
         GLES20.glEnableVertexAttribArray(texCoord);
         points.position(0);uv.position(0);

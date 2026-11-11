@@ -312,6 +312,7 @@ public final class AudioAnalyzer {
             for (int k=0;k<normBands.length;k++)
                 normBands[k]=Math.max(normBands[k],maximum*.06f);
             float averageBass=0, previousBass=0, averageMid=0, previousMid=0;
+            SpectralOnset onset=new SpectralOnset();
             long lastKick=-1000,lastSnare=-1000;
             for(int i=0;i<raw.size();i++) {
                 Raw r=raw.get(i);
@@ -331,9 +332,14 @@ public final class AudioAnalyzer {
                 }
                 previousBass=bass;
                 previousMid=mids;
-                frames[i]=new Features(bass,mids,highs,kick,snare);
                 for(int k=0;k<BandSpectrum.COUNT;k++)
                     spectrum[i][k]=clamp(r.bands[k]/normBands[k]*.68f);
+                SpectralOnset.Event transientEvent=onset.next(spectrum[i],r.ms);
+                // Use both broadband envelope rises and narrower spectral flux. These
+                // remain estimates from the mix, not separated instrument tracks.
+                kick=Math.max(kick,transientEvent.kick);
+                snare=Math.max(snare,transientEvent.snare);
+                frames[i]=new Features(bass,mids,highs,kick,snare);
                 time[i]=r.ms;
             }
             // Keep transient events visible across adjacent frames for reliable drawing at 60 fps.

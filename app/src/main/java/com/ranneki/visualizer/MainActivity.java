@@ -127,6 +127,7 @@ public class MainActivity extends Activity {
         });
         addButton(commandsRow,"▤ Simpan PNG",v->saveImage());
         addButton(commandsRow,"● Export MP4",v->chooseExport());
+        addButton(commandsRow,"✦ GLSL Shader",v->editGpuShader());
         addButton(commandsRow,"◷ Performa",v->showPerformance());
         addButton(commandsRow,"◷ Preview 15s",v->benchmarkPreview());
         addButton(commandsRow,"▣ Benchmark MP4 8s",v->runBenchmark());
@@ -815,6 +816,50 @@ public class MainActivity extends Activity {
             if(mappingButtons[id]!=null)mappingButtons[id].setText("→ "+ReactiveView.SOURCES[reactive.getSource(id)]);
         }
     }
+    /** Custom GLES 2.0 fragment shader. Runs at export time on-device, not on the Canvas preview. */
+    private void editGpuShader() {
+        if(exporting){toast("Tunggu ekspor selesai");return;}
+        final EditText input=new EditText(this);
+        input.setText(reactive.getShaderSource());
+        input.setTextSize(11);
+        input.setTextColor(Color.WHITE);
+        input.setBackgroundColor(0xff151b30);
+        input.setSingleLine(false);
+        input.setMinLines(12);
+        input.setMaxLines(22);
+        input.setGravity(Gravity.TOP);
+        final ScrollView editor=new ScrollView(this);
+        editor.addView(input);
+        String help="GLES 2.0 fragment shader untuk EKSPOR MP4. " +
+                "Input: varying vTex, sampler2D uTexture; " +
+                "uniform float uTime, uKick, uBass, uSnare, uTreble, " +
+                "uPulse, uChromatic, uVignette; uniform vec2 uResolution. " +
+                "uTime dalam detik, level audio 0-1. Preview Canvas tidak menampilkan shader. " +
+                "Loop dilarang demi keamanan GPU HP.";
+        new AlertDialog.Builder(this).setTitle("GPU GLSL • Offline")
+                .setMessage(help).setView(editor)
+                .setPositiveButton("Simpan",(dialog,which)->{
+                    try {
+                        reactive.setShaderSource(input.getText().toString());
+                        savePreset();
+                        toast("Shader disimpan di proyek. Ekspor MP4 untuk melihat hasilnya.");
+                    }catch(Exception err){
+                        status.setText("Shader ditolak: "+err.getMessage());
+                    }
+                })
+                .setNeutralButton("Contoh",(dialog,which)->{
+                    final String[] options={"Classic", "Neon reactive", "Monochrome"};
+                    new AlertDialog.Builder(this).setTitle("Pilih preset GPU")
+                            .setItems(options,(d,index)->{
+                                String fragment=index==1?ShaderSource.NEON:
+                                        index==2?ShaderSource.MONOCHROME:ShaderSource.CLASSIC;
+                                reactive.setShaderSource(fragment);savePreset();
+                                toast("Shader preset tersimpan; berlaku saat ekspor MP4");
+                            }).show();
+                })
+                .setNegativeButton("Batal",(dialog,which)->{}).show();
+    }
+
     private void chooseExport() {
         if(musicUri==null || !analyzed) {toast("Impor lagu dan tunggu analisis dulu");return;}
         if(exporting) {toast("Ekspor sedang berjalan");return;}

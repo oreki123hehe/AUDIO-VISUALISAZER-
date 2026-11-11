@@ -91,3 +91,12 @@ A fully GLES-native GPU particle engine, arbitrary user-written GLSL shaders, sa
 ### Beat grid (experimental)
 
 The analyzer estimates an approximate song tempo (70–190 BPM) from detected transients and draws beat-grid markers over the zoomable waveform. This improves timeline navigation but cannot separate musical stems or guarantee BPM for half-time, syncopated, ambient, or heavily distorted music. Effects continue following measured FFT/onset activity; no artificial beat substitutes for the source audio.
+
+### Integrated custom GLSL, stronger onset detection, export storage checks
+
+- The **GPU GLSL Shader** editor accepts a GLES 2.0 fragment shader used by offline MP4 encoding. Built-in Classic, Neon and Monochrome shader templates are included. User GLSL is stored inside project JSON and portable ZIP, and compiler errors appear as export errors. Time and independent kick/bass/snare/treble uniforms drive video effects. GLSL has a 8,000-character limit and GPU-dangerous loops are refused. **The live Canvas preview does not execute custom GLSL**, so review a short MP4 before long export.
+- Audio analysis combines the previous amplitude-rise detector with **per-frequency spectral-flux onset estimates** and refractory gating. This reduces reliance on wide-band volume jumps, but is *not* isolated source separation and cannot guarantee individual instruments in complex mixes.
+- Long exports run a cache free-space preflight using a conservative temporary-file size estimate. This can reject very long high-bitrate exports even if the final MP4 might fit; free storage may still change during export.
+- CI executes extra GLSL input, onset-detector and disk-budget tests. The emulator smoke test compiles the custom Neon fragment shader in the Android GLES environment and encodes an H.264/AAC sample.
+
+**Remaining hard limit:** a fully GPU-native compositor for every masked/blended/keyframed particle and true high-quality drum/vocal stem separation are substantially larger subsystems. Current particle layers still use CPU Canvas, with GPU shader post-processing for export. No physical Poco F6 benchmark has been taken.

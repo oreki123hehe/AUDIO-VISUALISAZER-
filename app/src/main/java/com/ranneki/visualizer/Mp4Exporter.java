@@ -42,6 +42,7 @@ public final class Mp4Exporter {
             AtomicBoolean cancelled,Progress progress) throws Exception {
         if(profile==null||audio==null||durationMs<=0||scene.getTrack()==null)
             throw new IllegalArgumentException("Scene / durasi / analisis audio belum siap");
+        ExportBudget.check(context.getCacheDir().getUsableSpace(),profile.bitrate(),durationMs);
         File video=File.createTempFile("ranneki-video-",".mp4",context.getCacheDir());
         File rendered=File.createTempFile("ranneki-final-",".mp4",context.getCacheDir());
         File convertedAudio=null;
@@ -125,7 +126,7 @@ public final class Mp4Exporter {
                 throw new IllegalArgumentException("Encoder H.264 tidak mendukung "+w+"x"+h+" @"+fps+" FPS");
             encoder.configure(format,null,null,MediaCodec.CONFIGURE_FLAG_ENCODE);
             Surface surface=encoder.createInputSurface();
-            gl=new CanvasEncoderSurface(surface,w,h);
+            gl=new CanvasEncoderSurface(surface,w,h,scene.getShaderSource());
             encoder.start();
             muxer=new MediaMuxer(dest.getAbsolutePath(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             frame=Bitmap.createBitmap(profile.rasterWidth(),profile.rasterHeight(),Bitmap.Config.ARGB_8888);
@@ -143,7 +144,8 @@ public final class Mp4Exporter {
                 float pulse=Math.min(1f,f.kick*.75f+f.bass*.25f);
                 long submitStart=System.nanoTime();
                 gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
-                        profile.chromaticPercent/100f,profile.vignettePercent/100f);
+                        profile.chromaticPercent/100f,profile.vignettePercent/100f,
+                        ms/1000f,f);
                 metrics.record(renderTime,System.nanoTime()-submitStart);
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
                 if(index%fps==0) {

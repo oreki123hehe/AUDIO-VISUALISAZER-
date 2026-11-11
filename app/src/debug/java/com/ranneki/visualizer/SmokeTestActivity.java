@@ -51,10 +51,18 @@ public final class SmokeTestActivity extends Activity {
             scene.setTrack(track);
             scene.setPortrait(true);
             scene.setEconomyMode(true);
+            scene.setShaderSource(ShaderSource.NEON);
+            if(!ShaderSource.NEON.equals(scene.getShaderSource()))
+                throw new IllegalStateException("GPU custom shader not configured");
             for(int layer:scene.getLayerOrder())
                 if(scene.getLayerType(layer)!=ReactiveView.DUST &&
                         scene.getLayerType(layer)!=ReactiveView.GLOW)
                     scene.setEnabled(layer,false);
+            String json=scene.exportProjectJson();
+            ReactiveView verifyShader=new ReactiveView(this);
+            if(!verifyShader.importProjectJson(json) ||
+                    !ShaderSource.NEON.equals(verifyShader.getShaderSource()))
+                throw new IllegalStateException("GLSL shader project serialization failed");
             ExportProfile profile=new ExportProfile(320,568,30,75,15,10);
             String stats=Mp4Exporter.export(this,Uri.fromFile(wav),Uri.fromFile(mp4),
                     scene,profile,2000,new AtomicBoolean(false),(percent,stage)->{});

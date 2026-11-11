@@ -87,6 +87,9 @@ public final class ReactiveView extends View {
     private final float[] envelope=new float[MAX_LAYERS];
     private final float[] spectralBins=new float[BandSpectrum.COUNT];
     private boolean economyMode=true;
+    private String shaderSource=ShaderSource.CLASSIC;
+    public String getShaderSource(){return shaderSource;}
+    public void setShaderSource(String source) {shaderSource=ShaderSource.validate(source);invalidate();}
     private boolean spectrumEnabled=true;
     private int spectrumScale=55;
     private int cameraShake=0;
@@ -455,7 +458,7 @@ public final class ReactiveView extends View {
             JSONObject root=new JSONObject();root.put("version",3);
             root.put("portrait",portrait);root.put("eco",economyMode);
             root.put("spectrum",spectrumEnabled);root.put("spectrumScale",spectrumScale);
-            root.put("cameraShake",cameraShake);
+            root.put("cameraShake",cameraShake);root.put("shaderSource",shaderSource);
             JSONArray layers=new JSONArray();
             for(int id:layerOrder) {
                 JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
@@ -486,6 +489,8 @@ public final class ReactiveView extends View {
         try {
             JSONObject root=new JSONObject(json);JSONArray arr=root.getJSONArray("layers");
             if(arr.length()>MAX_LAYERS)return false;
+            // Validate before mutating scene: malicious or broken preset must not erase layers.
+            String parsedShader=ShaderSource.validate(root.optString("shaderSource",ShaderSource.CLASSIC));
             for(int id:getLayerOrder())removeLayer(id);
             for(int j=0;j<arr.length();j++) {
                 JSONObject o=arr.getJSONObject(j);
@@ -521,6 +526,7 @@ public final class ReactiveView extends View {
             setPortrait(root.optBoolean("portrait",true));setEconomyMode(root.optBoolean("eco",true));
             setSpectrumEnabled(root.optBoolean("spectrum",true));
             setSpectrumScale(root.optInt("spectrumScale",55));setCameraShake(root.optInt("cameraShake",0));
+            shaderSource=parsedShader;
             invalidate();return true;
         }catch(Exception e){return false;}
     }

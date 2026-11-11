@@ -28,10 +28,10 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest; do
-            java -cp build/pure-tests com.ranneki.visualizer.$test
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest; do
+            java -ea -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Assemble debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
