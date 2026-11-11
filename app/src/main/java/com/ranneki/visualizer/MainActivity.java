@@ -41,14 +41,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Native Android audio-reactive editor. The finished application works offline. */
 public class MainActivity extends Activity {
     private static final int PICK_AUDIO=101, PICK_IMAGE=102, PICK_EXPORT=103,
-            PICK_LAYER_IMAGE=104, PICK_PRESET_OPEN=105, PICK_PRESET_SAVE=106;
+            PICK_LAYER_IMAGE=104, PICK_PRESET_OPEN=105, PICK_PRESET_SAVE=106, PICK_LAYER_VIDEO=107, PICK_BUNDLE_SAVE=108, PICK_BUNDLE_OPEN=109;
     private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
     private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
     private final ExecutorService exportWorker=Executors.newSingleThreadExecutor();
     private final AtomicBoolean exportCancel=new AtomicBoolean(false);
     private volatile boolean exporting=false;
-    private Uri musicUri;
-    private int pendingImageLayer=-1;
+    private Uri musicUri, backgroundUri;
+    private int pendingImageLayer=-1, pendingVideoLayer=-1;
     private int exportWidth=720,exportHeight=1280;
     private int exportFps=30,exportRasterPercent=75;
     private int gpuChromatic=35,gpuVignette=22;
@@ -110,7 +110,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.8",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  RC",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -133,6 +133,8 @@ public class MainActivity extends Activity {
         addButton(commandsRow,"✓ Preset",v->savePreset());
         addButton(commandsRow,"⇧ Simpan File Preset",v->createProjectFile());
         addButton(commandsRow,"⇩ Buka File Preset",v->choose("application/json",PICK_PRESET_OPEN));
+        addButton(commandsRow,"⇧ Proyek ZIP + Media",v->createPortableProject());
+        addButton(commandsRow,"⇩ Buka Proyek ZIP",v->choose("application/zip",PICK_BUNDLE_OPEN));
         root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
 
         reactive=new ReactiveView(this);
@@ -183,7 +185,10 @@ public class MainActivity extends Activity {
             timelineView.setVisibility(show?View.VISIBLE:View.GONE);
             timelineToggle.setText(show?"▤ Timeline ▾":"▤ Timeline ▸");
         });
-        timelineHeader.addView(text("Waveform • FX lanes • keyframe",11,0xff8f9ec5,false));
+        addButton(timelineHeader,"−",v->timelineView.setZoom(timelineView.getZoom()/2));
+        addButton(timelineHeader,"＋",v->timelineView.setZoom(timelineView.getZoom()*2));
+        addButton(timelineHeader,"◀",v->timelineView.scrollWindow(-1));
+        addButton(timelineHeader,"▶",v->timelineView.scrollWindow(1));
         root.addView(timelineHeader,new LinearLayout.LayoutParams(-1,dp(37)));
         root.addView(timelineView,new LinearLayout.LayoutParams(-1,dp(179)));
 
@@ -298,6 +303,8 @@ public class MainActivity extends Activity {
             addButton(advanced,"◉ Warna Teks",v->editLayerColor(effect));
         } else if(reactive.getLayerType(effect)==ReactiveView.IMAGE) {
             addButton(advanced,"▣ Ganti Gambar",v->requestLayerImage(effect));
+        } else if(reactive.getLayerType(effect)==ReactiveView.VIDEO) {
+            addButton(advanced,"▣ Ganti Video • audio dari lagu utama",v->requestLayerVideo(effect));
         }
         TextView layoutLabel=text("TRANSFORM • tap nama layer untuk mengganti nama",11,PURPLE,true);
         advanced.addView(layoutLabel);
@@ -346,6 +353,7 @@ public class MainActivity extends Activity {
             mask.setText("Mask: "+ReactiveView.MASK_NAMES[reactive.getMask(effect)]);
         });
         advanced.addView(material);
+        addButton(advanced,"✎ Edit Polygon Mask (x,y; x,y)",v->editPolygon(effect));
         addSlider(advanced,"Mask Radius",reactive.getMaskRadius(effect),value->reactive.setMaskRadius(effect,value));
         addSlider(advanced,"Arah (0=auto)",reactive.getDirection(effect),value->reactive.setDirection(effect,value));
         TextView automationLabel=text(automationSummary(effect),11,PURPLE,false);
@@ -418,6 +426,24 @@ public class MainActivity extends Activity {
     private void moveCard(int effect,int delta) {
         if(reactive.moveLayer(effect,delta)){reorderPanels();timelineView.refresh();}
     }
+    private void requestLayerVideo(int layer) {
+        pendingVideoLayer=layer;
+        choose("video/*",PICK_LAYER_VIDEO);
+    }
+    private void editPolygon(int layer) {
+        EditText input=new EditText(this);
+        input.setMinLines(3);input.setSingleLine(false);
+        input.setText(reactive.getPolygonMask(layer));
+        new AlertDialog.Builder(this)
+            .setTitle("Polygon mask • titik 0–1")
+            .setMessage("Minimal 3 titik. Contoh: 0,0;1,0;1,1;0,1. Pilih 'Polygon custom' pada Mask.")
+            .setView(input)
+            .setNegativeButton("Batal",(d,w)->{})
+            .setPositiveButton("Simpan",(d,w)->{
+                try{reactive.setPolygonMask(layer,input.getText().toString());}
+                catch(IllegalArgumentException e){toast("Polygon tidak valid: "+e.getMessage());}
+            }).show();
+    }
     private void requestLayerImage(int layer) {
         pendingImageLayer=layer;
         choose("image/*",PICK_LAYER_IMAGE);
@@ -447,6 +473,7 @@ public class MainActivity extends Activity {
                     reactive.setEnabled(id,true);
                     addEffectPanel(effectContainer,id);reorderPanels();timelineView.setFocusLayer(id);timelineView.refresh();
                     if(type==ReactiveView.IMAGE)requestLayerImage(id);
+                    else if(type==ReactiveView.VIDEO)requestLayerVideo(id);
                 }).show();
     }
     private void toast(String message) {Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
@@ -531,6 +558,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(request,result,data);
         if(result!=RESULT_OK || data==null || data.getData()==null) {
             if(request==PICK_LAYER_IMAGE)pendingImageLayer=-1;
+            if(request==PICK_LAYER_VIDEO)pendingVideoLayer=-1;
             return;
         }
         Uri uri=data.getData();
@@ -545,7 +573,15 @@ public class MainActivity extends Activity {
                 if(reactive.isAllocated(layer))reactive.setLayerImage(layer,decodeImage(uri,1024),uri.toString());
                 status.setText("Gambar layer berhasil dimuat");
             }catch(Exception e){status.setText("Gambar layer gagal: "+e.getMessage());}
-        } else if(request==PICK_EXPORT) exportMp4(uri);
+        } else if(request==PICK_LAYER_VIDEO && pendingVideoLayer>=0){
+            int layer=pendingVideoLayer;pendingVideoLayer=-1;
+            try {
+                if(reactive.isAllocated(layer))reactive.setLayerVideoUri(layer,uri.toString());
+                status.setText("Video layer siap • suara tetap memakai lagu utama");
+            }catch(Exception e){status.setText("Video gagal dibuka: "+e.getMessage());}
+        } else if(request==PICK_BUNDLE_SAVE)savePortableProject(uri);
+        else if(request==PICK_BUNDLE_OPEN)openPortableProject(uri);
+        else if(request==PICK_EXPORT) exportMp4(uri);
         else if(request==PICK_PRESET_OPEN) importProjectFile(uri);
         else if(request==PICK_PRESET_SAVE) saveProjectFile(uri);
     }
@@ -613,16 +649,24 @@ public class MainActivity extends Activity {
     private void loadImage(Uri uri) {
         try {
             reactive.setBackdrop(decodeImage(uri,2048));
+            backgroundUri=uri;
             status.setText("Background terpasang. Atur mapping efek sesuai musik.");
         } catch(Exception e) {status.setText("Gambar gagal dibuka: "+e.getMessage());}
     }
     private void restoreLayerImages(){
         for(int id:reactive.getLayerOrder()){
-            if(reactive.getLayerType(id)!=ReactiveView.IMAGE)continue;
-            String uri=reactive.getImageUri(id);
-            if(uri==null||uri.isEmpty())continue;
-            try{reactive.setLayerImage(id,decodeImage(Uri.parse(uri),1024),uri);}
-            catch(Exception e){status.setText("Sebagian gambar preset tidak tersedia lagi");}
+            int type=reactive.getLayerType(id);
+            if(type==ReactiveView.IMAGE){
+                String uri=reactive.getImageUri(id);
+                if(uri==null||uri.isEmpty())continue;
+                try{reactive.setLayerImage(id,decodeImage(Uri.parse(uri),1024),uri);}
+                catch(Exception e){status.setText("Sebagian gambar preset tidak tersedia lagi");}
+            }else if(type==ReactiveView.VIDEO){
+                String uri=reactive.getVideoUri(id);
+                if(uri==null||uri.isEmpty())continue;
+                try{reactive.setLayerVideoUri(id,uri);}
+                catch(Exception e){status.setText("Sebagian video preset tidak tersedia lagi");}
+            }
         }
     }
     private void togglePlay() {
@@ -639,6 +683,52 @@ public class MainActivity extends Activity {
             prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();
             toast("Preset layer tersimpan offline");
         }catch(Exception e){status.setText("Preset gagal: "+e.getMessage());}
+    }
+    private void createPortableProject(){
+        if(exporting){toast("Selesaikan ekspor terlebih dahulu");return;}
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/zip");
+        intent.putExtra(Intent.EXTRA_TITLE,"ranneki-project.rnszip");
+        startActivityForResult(intent,PICK_BUNDLE_SAVE);
+    }
+    private void savePortableProject(Uri location){
+        if(exporting)return;
+        exporting=true;exportCancel.set(false);
+        final String json=reactive.exportProjectJson();
+        final Uri audio=musicUri,background=backgroundUri;
+        status.setText("Menyimpan media ke proyek ZIP…");
+        exportWorker.execute(()->{
+            try{
+                ProjectBundle.save(getApplicationContext(),location,json,audio,background);
+                runOnUiThread(()->status.setText("Proyek + media tersimpan (offline)."));
+            }catch(Exception e){
+                runOnUiThread(()->status.setText("Gagal menyimpan ZIP: "+e.getMessage()));
+            }finally{exporting=false;}
+        });
+    }
+    private void openPortableProject(Uri location){
+        if(exporting){toast("Selesaikan ekspor terlebih dahulu");return;}
+        exporting=true;
+        status.setText("Membaca dan memverifikasi proyek ZIP…");
+        exportWorker.execute(()->{
+            try{
+                ProjectBundle.Loaded loaded=ProjectBundle.open(getApplicationContext(),location);
+                runOnUiThread(()->{
+                    String original=reactive.exportProjectJson();
+                    if(!reactive.importProjectJson(loaded.json)){
+                        reactive.importProjectJson(original);
+                        status.setText("Format proyek tidak didukung");return;
+                    }
+                    restoreLayerImages();refreshLayerEditor();
+                    if(loaded.background!=null)loadImage(loaded.background);
+                    if(loaded.music!=null)loadAudio(loaded.music);
+                    prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();
+                    status.setText("Proyek ZIP lengkap dimuat: "+reactive.getLayerCount()+" layer.");
+                });
+            }catch(Exception e){runOnUiThread(()->status.setText("Impor proyek ZIP gagal: "+e.getMessage()));}
+            finally{exporting=false;}
+        });
     }
     private void createProjectFile() {
         if(exporting){toast("Selesaikan ekspor terlebih dahulu");return;}
@@ -757,6 +847,11 @@ public class MainActivity extends Activity {
         Bitmap bg=reactive.getBackdrop();
         if(bg!=null && !bg.isRecycled())renderCopy.setBackdrop(bg.copy(Bitmap.Config.ARGB_8888,false));
         reactive.copyImageLayersTo(renderCopy);
+        try{reactive.copyVideoLayersTo(renderCopy);}
+        catch(Exception e){
+            renderCopy.recycleLayerImages();renderCopy.closeVideoLayers();exporting=false;
+            status.setText("Video layer tidak dapat dibaca: "+e.getMessage());return;
+        }
         renderCopy.setEconomyMode(false);
         final Uri input=musicUri;
         final int length=durationMs;
@@ -776,7 +871,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->status.setText("Ekspor gagal: "+e.getMessage()));
             }finally {
                 Bitmap b=renderCopy.getBackdrop();if(b!=null && !b.isRecycled())b.recycle();
-                renderCopy.recycleLayerImages();
+                renderCopy.recycleLayerImages();renderCopy.closeVideoLayers();
                 exporting=false;
                 runOnUiThread(()->status.setOnClickListener(null));
             }
@@ -797,6 +892,11 @@ public class MainActivity extends Activity {
         Bitmap background=reactive.getBackdrop();
         if(background!=null&&!background.isRecycled())scene.setBackdrop(background.copy(Bitmap.Config.ARGB_8888,false));
         reactive.copyImageLayersTo(scene);
+        try{reactive.copyVideoLayersTo(scene);}
+        catch(Exception e){
+            scene.recycleLayerImages();scene.closeVideoLayers();
+            status.setText("Video layer tidak dapat dibaca: "+e.getMessage());return;
+        }
         scene.setEconomyMode(false);
         final ExportProfile profile=new ExportProfile(720,1280,30,75,25,20);
         final Uri input=musicUri;
@@ -814,7 +914,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->status.setText("Benchmark gagal: "+error.getMessage()));
             }finally{
                 Bitmap copied=scene.getBackdrop();if(copied!=null&&!copied.isRecycled())copied.recycle();
-                scene.recycleLayerImages();exporting=false;
+                scene.recycleLayerImages();scene.closeVideoLayers();exporting=false;
                 runOnUiThread(()->status.setOnClickListener(null));
             }
         });
@@ -946,6 +1046,7 @@ public class MainActivity extends Activity {
         analysisWorker.shutdownNow();
         exportCancel.set(true);exportWorker.shutdownNow();
         if(player!=null) {player.release();player=null;}
+        if(reactive!=null){reactive.closeVideoLayers();reactive.recycleLayerImages();}
         super.onDestroy();
     }
 }

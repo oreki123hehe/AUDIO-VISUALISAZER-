@@ -75,3 +75,15 @@ GitHub Actions can establish that the Android project compiles and the pure Java
 - Fixed card reordering to anchor below the Add Layer button rather than a fragile hard-coded layout index; imported presets rebuild their edit cards.
 - Emulator integration no longer depends on AndroidX instrumentation artifacts. The debug-only `SmokeTestActivity` generates synthetic rhythmic WAV, tests FFT analysis, renders 2 seconds of H.264 + AAC offline, verifies both MP4 tracks using `MediaExtractor`, and writes a PASS/FAIL report for CI. Test activity is only packaged in debug variants.
 - **Release blocker:** Device performance, Android hardware codec combinations, audio A/V sync and thermals still require a physical Poco F6 test. CI emulator pass is not a hardware benchmark.
+
+## Release-candidate development batch — video clips, portable archives, and masks
+
+- Added an **offline VIDEO layer** with clip start/end times, opacity, transforms, blending, keyframe automation and polygon masking. Video layers are muted by design: the imported song remains the soundtrack. Preview frame extraction runs asynchronously and may look less smooth on slow sources; export requests exact timestamps through Android MediaMetadataRetriever. High-resolution video decoding is memory-limited by per-frame scaling. The extractor is not a low-latency hardware video timeline decoder and needs Poco F6 validation.
+- Added **custom normalized polygon masks** (3–32 editable points) in addition to circle/top/bottom masks. Polygon shapes are saved in presets and restored in exports. Freehand drawing/antialias feathering is still not implemented.
+- Added **Ranneki project ZIP** export/import (`.rnszip` as an application/zip file), packaging local audio, background artwork, and every image/video layer with project JSON. Imports extract files to app-private storage and remap media URIs without any server. ZIP entries are allowlisted; uncompressed total and per-entry sizes are bounded to avoid untrusted archive expansion. Raw JSON preset export remains available; it does not embed media.
+- Added timeline **zoom 1–16× and left/right window navigation**, preserving existing layer trim/move and keyframe indicators.
+- Android emulator smoke test now exercises video layer rendering plus a project ZIP round-trip, in addition to H.264/AAC export.
+
+### Remaining engineering work
+
+A fully GLES-native GPU particle engine, arbitrary user-written GLSL shaders, sample-accurate stem separation, an unlimited multitrack NLE, low-latency hardware video decoding, and 60 FPS sustained Poco F6 benchmarks remain unfinished. The Android app has not been installed on the physical Poco F6. Successful CI builds or emulator codecs must not be mistaken for real-device thermals, smoothness or final playback quality.

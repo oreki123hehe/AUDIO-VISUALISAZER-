@@ -72,7 +72,32 @@ public final class SmokeTestActivity extends Activity {
                 }
                 if(!video||!audio)throw new IllegalStateException("Missing MP4 video or audio track");
             }finally{extractor.release();}
-            return "H264 + AAC mux verified: "+mp4.length()+" bytes; "+stats;
+            // Validate actual clip decoding in the same layer compositor used for preview/export.
+            int videoLayer=scene.addLayer(ReactiveView.VIDEO);
+            scene.setLayerVideoUri(videoLayer,Uri.fromFile(mp4).toString());
+            scene.setMask(videoLayer,4);
+            scene.setPolygonMask(videoLayer,"0.10,0.10;0.90,0.10;0.80,0.90;0.20,0.90");
+            scene.setLayerStart(videoLayer,0);
+            android.graphics.Bitmap preview=android.graphics.Bitmap.createBitmap(
+                    320,568,android.graphics.Bitmap.Config.ARGB_8888);
+            try{
+                scene.renderExportFrame(new android.graphics.Canvas(preview),320,568,500);
+            }finally{preview.recycle();scene.closeVideoLayers();}
+            File archive=new File(getCacheDir(),"ranneki-smoke-project.zip");
+            try {
+                ProjectBundle.save(this,Uri.fromFile(archive),scene.exportProjectJson(),
+                        Uri.fromFile(wav),null);
+                ProjectBundle.Loaded loaded=ProjectBundle.open(this,Uri.fromFile(archive));
+                if(loaded.music==null)throw new IllegalStateException("Portable project has no audio");
+                ReactiveView imported=new ReactiveView(this);
+                if(!imported.importProjectJson(loaded.json))throw new IllegalStateException("Project JSON lost");
+                int[] ids=imported.getLayerOrder();int last=ids[ids.length-1];
+                if(imported.getLayerType(last)!=ReactiveView.VIDEO || imported.getMask(last)!=4)
+                    throw new IllegalStateException("Video layer or polygon mask was lost");
+                imported.setLayerVideoUri(last,imported.getVideoUri(last));
+                imported.closeVideoLayers();
+            }finally {archive.delete();}
+            return "H264/AAC + video layer + polygon + portable ZIP verified: "+mp4.length()+" bytes; "+stats;
         }finally {wav.delete();mp4.delete();}
     }
     private static void write16(FileOutputStream out,int value) throws IOException {

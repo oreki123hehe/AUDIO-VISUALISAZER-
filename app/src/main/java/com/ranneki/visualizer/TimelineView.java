@@ -17,6 +17,8 @@ public final class TimelineView extends View {
     private ReactiveView scene;
     private float[] peaks=new float[0];
     private long durationMs=0,positionMs=0;
+    private float zoom=1f;
+    private long windowStartMs=0;
     private int focusLayer=-1;
     private SeekListener seekListener;
     private final float dp;
@@ -31,7 +33,27 @@ public final class TimelineView extends View {
     }
     public void setScene(ReactiveView view){scene=view;invalidate();}
     public void setSeekListener(SeekListener listener){seekListener=listener;}
-    public void setDuration(long ms){durationMs=Math.max(0,ms);invalidate();}
+    public void setDuration(long ms){durationMs=Math.max(0,ms);windowStartMs=0;invalidate();}
+    public float getZoom(){return zoom;}
+    public void setZoom(float value){
+        float next=Math.max(1f,Math.min(16f,value));
+        long centered=windowStartMs+windowDuration()/2;
+        zoom=next;
+        windowStartMs=Math.max(0,Math.min(Math.max(0,durationMs-windowDuration()),centered-windowDuration()/2));
+        invalidate();
+    }
+    public void scrollWindow(int direction){
+        long step=Math.max(1,windowDuration()/2);
+        windowStartMs=Math.max(0,Math.min(Math.max(0,durationMs-windowDuration()),windowStartMs+step*direction));
+        invalidate();
+    }
+    private long windowDuration(){return Math.max(1,(long)(durationMs/zoom));}
+    private float windowFraction(long ms){
+        return Math.max(0f,Math.min(1f,(ms-windowStartMs)/(float)windowDuration()));
+    }
+    private long windowAt(float fraction){
+        return Math.max(0,Math.min(durationMs,windowStartMs+(long)(Math.max(0f,Math.min(1f,fraction))*windowDuration())));
+    }
     public void setPosition(long ms){positionMs=Math.max(0,ms);invalidate();}
     public void setTrack(AudioAnalyzer.Track track){
         peaks=track==null?new float[0]:track.waveformPeaks(360);
@@ -46,7 +68,7 @@ public final class TimelineView extends View {
         return Math.min(first,Math.max(0,ids.length-MAX_VISIBLE_LANES));
     }
     private float x(long ms,float left,float width) {
-        return left+TimelineMath.fraction(ms,durationMs)*width;
+        return left+windowFraction(ms)*width;
     }
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c);
@@ -55,13 +77,17 @@ public final class TimelineView extends View {
         float left=9*dp,right=w-9*dp,span=right-left;
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0xffb8c6e9);paint.setTextSize(11*dp);
-        c.drawText("WAVEFORM • sentuh untuk pindah posisi",left,14*dp,paint);
+        c.drawText("WAVEFORM • x"+((int)zoom)+" • geser playhead / lane",left,14*dp,paint);
         float mid=44*dp, amp=23*dp;
         if(peaks.length>0) {
             paint.setStrokeWidth(Math.max(1f,span/Math.max(1,peaks.length)*.83f));
             paint.setColor(0xff9788fa);
-            for(int i=0;i<peaks.length;i++) {
-                float px=left+(i+.5f)*span/peaks.length;
+            int start=(int)(peaks.length*windowStartMs/(double)Math.max(1,durationMs));
+            int end=(int)Math.ceil(peaks.length*(windowStartMs+windowDuration())/(double)Math.max(1,durationMs));
+            start=Math.max(0,Math.min(peaks.length,start));end=Math.max(start+1,Math.min(peaks.length,end));
+            for(int i=start;i<end;i++){
+                float px=x((long)((i+.5)*durationMs/peaks.length),left,span);
+                if(px<left || px>right)continue;
                 float level=Math.max(.04f,peaks[i]);
                 c.drawLine(px,mid-amp*level,px,mid+amp*level,paint);
             }
@@ -85,7 +111,7 @@ public final class TimelineView extends View {
                 paint.setColor(0xff24344d);c.drawRoundRect(bar,4*dp,4*dp,paint);
                 if(TimelineMath.intersects(a,b,durationMs)) {
                     float bx=x(a,barStart,barWidth),ex=x(b==Long.MAX_VALUE?durationMs:b,barStart,barWidth);
-                    bar.set(bx,top-10*dp,Math.max(bx+1,ex),top+4*dp);
+                    bar.set(Math.max(barStart,bx),top-10*dp,Math.max(Math.max(barStart,bx)+1,Math.min(right,ex)),top+4*dp);
                     paint.setColor(scene.isEnabled(id)?(id==focusLayer?0xffc6a7ff:0xff6477ca):0xff48506a);
                     c.drawRoundRect(bar,4*dp,4*dp,paint);
                 }
@@ -127,7 +153,7 @@ public final class TimelineView extends View {
                     if(mode!=DRAG_NONE){
                         dragMode=mode;dragLayer=layer;
                         dragBarLeft=startX;dragBarWidth=width;
-                        dragOriginMs=TimelineMath.positionAt((px-startX)/width,durationMs);
+                        dragOriginMs=windowAt((px-startX)/width);
                         dragLayerStart=a;dragLayerEnd=b==Long.MAX_VALUE?durationMs:b;
                         setFocusLayer(layer);
                     }
@@ -140,7 +166,7 @@ public final class TimelineView extends View {
         if(action==MotionEvent.ACTION_MOVE){
             if(dragMode==DRAG_SCRUB)seekToX(event.getX());
             else if(scene!=null&&dragLayer>=0){
-                long ms=TimelineMath.positionAt((event.getX()-dragBarLeft)/Math.max(1f,dragBarWidth),durationMs);
+                long ms=windowAt((event.getX()-dragBarLeft)/Math.max(1f,dragBarWidth));
                 long min=100;
                 if(dragMode==DRAG_START){
                     scene.setLayerStart(dragLayer,Math.min(ms,Math.max(0,dragLayerEnd-min)));
@@ -164,7 +190,7 @@ public final class TimelineView extends View {
     }
     private void seekToX(float screenX){
         float left=9*dp, span=Math.max(1,getWidth()-18*dp);
-        long time=TimelineMath.positionAt((screenX-left)/span,durationMs);
+        long time=windowAt((screenX-left)/span);
         setPosition(time);
         if(seekListener!=null)seekListener.seekTo(time);
     }

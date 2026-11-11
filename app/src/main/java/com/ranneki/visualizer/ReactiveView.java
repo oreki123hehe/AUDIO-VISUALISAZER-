@@ -25,8 +25,8 @@ public final class ReactiveView extends View {
     public static final int DUST=0, FIRE=1, RAIN=2, WATER=3, SMOKE=4,
             SNOW=5, SPARKS=6, LIGHTNING=7, GLOW=8, GLITCH=9;
     public static final int EFFECT_COUNT=10;
-    public static final int TEXT=10, IMAGE=11;
-    public static final int LAYER_TYPE_COUNT=12;
+    public static final int TEXT=10, IMAGE=11, VIDEO=12;
+    public static final int LAYER_TYPE_COUNT=13;
     public static final String[] EFFECT_NAMES={
             "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
             "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
@@ -34,12 +34,12 @@ public final class ReactiveView extends View {
     public static final String[] LAYER_NAMES={
             "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
             "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
-            "Cahaya • Glow", "Distorsi • Glitch", "Judul • Text", "Gambar • Image"};
+            "Cahaya • Glow", "Distorsi • Glitch", "Judul • Text", "Gambar • Image", "Video • Clip (tanpa audio)"};
     public static final String[] SOURCES={"Kick", "Bass", "Kick + Bass", "Treble",
             "Snare", "Frekuensi custom", "Mid"};
     public static final String[] PROPERTY_NAMES={"Ukuran", "Jumlah", "Kecepatan", "Opacity"};
     public static final String[] BLEND_NAMES={"Normal", "Add", "Screen", "Multiply"};
-    public static final String[] MASK_NAMES={"Tanpa mask", "Lingkaran", "Atas", "Bawah"};
+    public static final String[] MASK_NAMES={"Tanpa mask", "Lingkaran", "Atas", "Bawah", "Polygon custom"};
     private static final int DESIGN_WIDTH=400;
     private static final int PROPERTY_COUNT=4;
     public static final int MAX_LAYERS=48;
@@ -52,7 +52,10 @@ public final class ReactiveView extends View {
     private final float[] prevWaterLevel=new float[MAX_LAYERS],prevSparkLevel=new float[MAX_LAYERS];
     private int activeLayer=0;
     private final String[] layerName=new String[MAX_LAYERS];
-    private final String[] layerText=new String[MAX_LAYERS],imageUri=new String[MAX_LAYERS];
+    private final String[] layerText=new String[MAX_LAYERS],imageUri=new String[MAX_LAYERS],videoUri=new String[MAX_LAYERS];
+    private final String[] polygonEncoded=new String[MAX_LAYERS];
+    private final PolygonMask[] polygons=new PolygonMask[MAX_LAYERS];
+    private final VideoFrameLayer[] videoSources=new VideoFrameLayer[MAX_LAYERS];
     private final Bitmap[] imageLayers=new Bitmap[MAX_LAYERS];
     private final int[] textColor=new int[MAX_LAYERS];
     private final int[] offsetX=new int[MAX_LAYERS],offsetY=new int[MAX_LAYERS],
@@ -95,6 +98,7 @@ public final class ReactiveView extends View {
     private float phase=0;
     private AudioAnalyzer.Features live=AudioAnalyzer.Features.zero();
     private long exportPreviousMs=-1;
+    private boolean inExportFrame=false;
     private FrameMetrics previewMetrics=new FrameMetrics();
     private long previewMetricsStartNs=0L;
     /** Measured on the actual Android device, not a synthetic FPS estimate. */
@@ -300,6 +304,35 @@ public final class ReactiveView extends View {
         if(old!=null&&old!=bitmap&&!old.isRecycled())old.recycle();
         imageLayers[id]=bitmap;imageUri[id]=uri==null?"":uri;invalidate();
     }
+    /** Persisted content URI supports reloading clips in previews and independent export scenes. */
+    public String getVideoUri(int id){return videoUri[id]==null?"":videoUri[id];}
+    public void setLayerVideoUri(int id,String path) throws Exception {
+        if(!isAllocated(id)||layerType[id]!=VIDEO)return;
+        VideoFrameLayer replacement=null;
+        if(path!=null&&!path.isEmpty())replacement=new VideoFrameLayer(getContext(),android.net.Uri.parse(path));
+        VideoFrameLayer old=videoSources[id];videoSources[id]=replacement;
+        videoUri[id]=path==null?"":path;
+        if(old!=null)old.close();
+        invalidate();
+    }
+    public String getPolygonMask(int id){return polygonEncoded[id];}
+    public void setPolygonMask(int id,String points){
+        if(!isAllocated(id))return;
+        PolygonMask parsed=PolygonMask.parse(points);
+        polygons[id]=parsed;polygonEncoded[id]=parsed.encode();invalidate();
+    }
+    public void copyVideoLayersTo(ReactiveView destination) throws Exception {
+        int[] src=getLayerOrder(),dst=destination.getLayerOrder();
+        for(int i=0;i<Math.min(src.length,dst.length);i++){
+            if(layerType[src[i]]==VIDEO && videoUri[src[i]]!=null && !videoUri[src[i]].isEmpty())
+                destination.setLayerVideoUri(dst[i],videoUri[src[i]]);
+        }
+    }
+    public void closeVideoLayers(){
+        for(int id=0;id<MAX_LAYERS;id++){
+            if(videoSources[id]!=null){videoSources[id].close();videoSources[id]=null;}
+        }
+    }
     public void copyImageLayersTo(ReactiveView destination) {
         int[] src=getLayerOrder(),dst=destination.getLayerOrder();
         for(int i=0;i<Math.min(src.length,dst.length);i++){
@@ -321,7 +354,8 @@ public final class ReactiveView extends View {
         if(type<0 || type>=LAYER_TYPE_COUNT)return -1;
         for(int id=0;id<MAX_LAYERS;id++) if(!allocated[id]) {
             allocated[id]=true;layerType[id]=type;layerOrder.add(id);
-            layerName[id]=LAYER_NAMES[type];layerText[id]="RANNEKI";imageUri[id]="";
+            layerName[id]=LAYER_NAMES[type];layerText[id]="RANNEKI";imageUri[id]="";videoUri[id]="";
+            polygonEncoded[id]=PolygonMask.DEFAULT;polygons[id]=PolygonMask.parse(PolygonMask.DEFAULT);
             textColor[id]=Color.WHITE;offsetX[id]=50;offsetY[id]=50;
             layerScale[id]=50;layerRotation[id]=50;
             startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;
@@ -381,6 +415,11 @@ public final class ReactiveView extends View {
         for(int param=0;param<AutomationParameters.COUNT;param++)
             automation[dst][param].decode(automation[src][param].encode());
         layerText[dst]=layerText[src];imageUri[dst]=imageUri[src];textColor[dst]=textColor[src];
+        polygonEncoded[dst]=polygonEncoded[src];polygons[dst]=polygons[src];
+        videoUri[dst]=videoUri[src];
+        if(layerType[src]==VIDEO && videoUri[src]!=null&&!videoUri[src].isEmpty()) {
+            try{setLayerVideoUri(dst,videoUri[src]);}catch(Exception ignored){}
+        }
         Bitmap b=imageLayers[src];
         if(b!=null&&!b.isRecycled())imageLayers[dst]=b.copy(Bitmap.Config.ARGB_8888,false);
         layerName[dst]=layerName[src]+" (copy)";
@@ -393,6 +432,8 @@ public final class ReactiveView extends View {
         allocated[id]=false;layerOrder.remove(Integer.valueOf(id));
         Bitmap old=imageLayers[id];if(old!=null&&!old.isRecycled())old.recycle();
         imageLayers[id]=null;imageUri[id]=null;layerText[id]=null;
+        if(videoSources[id]!=null){videoSources[id].close();videoSources[id]=null;}
+        videoUri[id]=null;polygonEncoded[id]=null;polygons[id]=null;
         layerParticles[id]=null;layerRipples[id]=null;
         java.util.Arrays.fill(automation[id],null);
         invalidate();return true;
@@ -419,7 +460,8 @@ public final class ReactiveView extends View {
             for(int id:layerOrder) {
                 JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
                 o.put("name",layerName[id]);o.put("text",layerText[id]);
-                o.put("imageUri",imageUri[id]);o.put("textColor",textColor[id]);
+                o.put("imageUri",imageUri[id]);o.put("videoUri",videoUri[id]);
+                o.put("polygon",polygonEncoded[id]);o.put("textColor",textColor[id]);
                 o.put("x",offsetX[id]);o.put("y",offsetY[id]);
                 o.put("scale",layerScale[id]);o.put("rotation",layerRotation[id]);
                 o.put("startMs",startTimeMs[id]);o.put("endMs",endTimeMs[id]);
@@ -453,6 +495,8 @@ public final class ReactiveView extends View {
                 setLayerName(id,o.optString("name",LAYER_NAMES[layerType[id]]));
                 setLayerText(id,o.optString("text","RANNEKI"));
                 imageUri[id]=o.optString("imageUri","");
+                videoUri[id]=o.optString("videoUri","");
+                setPolygonMask(id,o.optString("polygon",PolygonMask.DEFAULT));
                 setLayerColor(id,o.optInt("textColor",Color.WHITE));
                 setLayerX(id,o.optInt("x",50));setLayerY(id,o.optInt("y",50));
                 setLayerScale(id,o.optInt("scale",50));setLayerRotation(id,o.optInt("rotation",50));
@@ -486,8 +530,9 @@ public final class ReactiveView extends View {
     public void renderExportFrame(Canvas canvas,int width,int height,long positionMs) {
         float dt=exportPreviousMs<0 ? 0f : Math.max(0f,(positionMs-exportPreviousMs)/1000f);
         exportPreviousMs=positionMs;
-        advance(positionMs,track!=null,dt);
-        render(canvas,width,height,dt);
+        inExportFrame=true;
+        try{advance(positionMs,track!=null,dt);render(canvas,width,height,dt);}
+        finally{inExportFrame=false;}
     }
     public void resetExport() {
         exportPreviousMs=-1;phase=0f;lastKickEvent=-999;previousPosition=-1;
@@ -658,6 +703,7 @@ public final class ReactiveView extends View {
                 case GLITCH:drawGlitch(canvas,h);break;
                 case TEXT:drawTextLayer(canvas,h);break;
                 case IMAGE:drawImageLayer(canvas,h);break;
+                case VIDEO:drawVideoLayer(canvas,h);break;
             }
             if(blend[fx]!=0) canvas.restore();
             canvas.restoreToCount(save);
@@ -683,6 +729,16 @@ public final class ReactiveView extends View {
                 break;
             case 2: canvas.clipRect(0,0,400,h*animated(fx,AutomationParameters.MASK_RADIUS)/100f);break;
             case 3: canvas.clipRect(0,h*(1-animated(fx,AutomationParameters.MASK_RADIUS)/100f),400,h);break;
+            case 4:
+                PolygonMask shape=polygons[fx];
+                if(shape!=null) {
+                    clipPath.reset();
+                    clipPath.moveTo(shape.x(0)*400f,shape.y(0)*h);
+                    for(int point=1;point<shape.count();point++)
+                        clipPath.lineTo(shape.x(point)*400f,shape.y(point)*h);
+                    clipPath.close();canvas.clipPath(clipPath);
+                }
+                break;
             default:break;
         }
     }
@@ -734,6 +790,16 @@ public final class ReactiveView extends View {
             c.drawBitmap(backdrop,crop,new RectF(0,0,400,h),p);
             p.setAlpha(255);p.setColor(0x77060b20);c.drawRect(0,0,400,h,p);
         }
+    }
+    private void drawVideoLayer(Canvas c,int h) {
+        VideoFrameLayer layer=videoSources[activeLayer];
+        if(layer==null)return;
+        p.setColor(Color.WHITE);
+        p.setStyle(Paint.Style.FILL);
+        p.setAlpha(Math.round(255*opacity(activeLayer)));
+        layer.draw(c,new RectF(0,0,400,h),p,framePositionMs,startTimeMs[activeLayer],
+                inExportFrame,()->postInvalidate());
+        p.setAlpha(255);
     }
     private void drawDust(Canvas c,int h,float dt) {
         float power=intensity(activeLayer);
