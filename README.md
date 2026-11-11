@@ -1,46 +1,51 @@
-# Ranneki Visualizer Studio — Android V1.2 (work in progress)
+# Ranneki Visualizer Studio — Android V1.3 (development)
 
-Aplikasi Android native untuk membuat visualizer reaktif musik **tanpa server dan tanpa Termux ketika digunakan**. Source menggunakan Java, Android Canvas, MediaCodec + MediaExtractor untuk analisis file musik secara offline, dan MediaPlayer untuk preview.
+Aplikasi Android native untuk membuat visualizer musik audio-reactive **offline** tanpa server dan tanpa Termux saat digunakan. Kode memakai Java, Android Canvas, MediaCodec + MediaExtractor untuk analisis file musik, serta MediaPlayer untuk preview. Target perangkat awal: Poco F6, belum diuji langsung pada perangkat.
 
-## Apa yang sudah diimplementasikan
+## Sudah diimplementasikan (kode aplikasi)
 
-- Impor musik lewat pemilih file Android; analisis MP3 / WAV dan format lain yang didukung decoder di perangkat.
-- Impor gambar anime/foto sebagai background, center crop 9:16 atau 16:9.
-- **FFT 2048 / hop 512 / decimate 2**, deteksi energi bass, mids, highs, serta perkiraan transient kick dan snare.
-- **32 pita spektrum logaritmis (25–10.000 Hz)** untuk sumber `Frekuensi custom` pada tiap layer. Rentang tertinggi dibatasi Nyquist file aslinya.
-- **10 efek audio reactive**: debu, api, hujan, air/ripple, asap, salju, percikan, petir, glow, glitch.
-- Tiap efek dapat di-ON/OFF dan diurutkan melalui tombol ↑ dan ↓; pengaturan masing-masing mencakup:
-  - Sumber: Kick, Bass, Kick+Bass, Treble, Snare, Frekuensi custom, Mid.
-  - Ukuran, Jumlah, Reaktivitas, Opacity, Kecepatan.
-  - Threshold 0–95%, Attack 0–1.000 ms, Release 0–1.500 ms.
-  - Rentang frekuensi Min/Max custom, 25–10.000 Hz.
-- Spectrum melingkar menggunakan 32 pita frekuensi, bisa dimatikan dan diubah ukurannya. Kamera punya efek shake yang mengikuti hentakan kick.
-- **Mode ECO 30 FPS** sebagai default preview hemat beban (pengurangan densitas partikel); **QUALITY 60 FPS** opsional. Ini mitigasi beban, bukan jaminan HP tidak panas.
-- Analisis file audio sebelumnya dibatalkan saat pengguna memilih file baru (agar tidak menghabiskan CPU sia-sia).
-- Preset lokal menyimpan urutan layer, kondisi masing-masing efek, serta seluruh slider dan peta frekuensi. Ekspor screenshot frame PNG.
+- Import audio melalui Android Storage Access Framework, analisis MP3/WAV dan format lain yang dikenali decoder perangkat, serta import gambar sebagai background.
+- Analisis offline FFT 2048 / hop 512 / decimate 2 dengan 32 band logaritmis antara 25–10.000 Hz (dibatasi sample rate audio).
+- Perkiraan onset kick/snare serta energi bass, mid, dan treble. **Bukan pemisahan stem / pengenalan instrumen akurat.**
+- 10 layer efek yang dapat diaktifkan dan dipindahkan urutannya: dust, fire, rain, ripple, smoke, snow, sparks, lightning, glow, glitch.
+- **Per FX**: sumber ritme utama; threshold/attack/release, ukuran, kepadatan, reaktivitas, opacity, kecepatan, custom min/max Hz.
+- **V1.3** routing independen untuk **ukuran, kepadatan, kecepatan, opacity** ke sumber kick/bass/kick+bass/snare/mid/treble/custom Hz, atau mode Manual.
+- **V1.3** pilihan blending per layer Normal/Add/Screen/Multiply, mask sederhana (circle/top/bottom) dan ukuran mask, arah gerak partikel.
+- **V1.3** keyframe linear untuk **strength** tiap layer berdasarkan posisi lagu; editing melalui tombol Add/Remove/Clear di posisi scrubber.
+- Spectrum melingkar berbasis 32 band, camera shake berbasis kick, format preview 9:16 / 16:9, mode ECO 30 FPS atau quality 60 FPS.
+- Simpan satu preset di SharedPreferences perangkat, termasuk mapping, keyframe, layer order, dan opsi efek; simpan frame PNG di galeri.
+- Pengujian matematika via JDK dan build Debug APK via GitHub Actions.
 
-## Yang masih dalam proses
+## Batasan saat ini
 
-- **Belum ekspor video MP4 bersuara**, editing timeline, video layer, masking, renderer shader 3D, stem separation AI, maupun sistem custom effect/plugin yang tak terbatas.
-- Kick/snare adalah **deteksi perkiraan**, bukan isolasi instrumen terpisah. Beberapa timbre dan frekuensi bertumpuk; perlu koreksi manual saat hasil tidak tepat.
-- Program belum diuji langsung pada Poco F6. Build Android perlu dijalankan lewat GitHub Actions untuk menilai kompilasi serta performa aktual.
+- Editor masih 10 tipe FX bawaan; belum bisa duplikasi layer arbitrer, import efek pihak ketiga, atau masking gambar bebas.
+- Timeline saat ini **scrubber + keyframe strength**, belum keyframe semua properti, multi-track timeline, atau waveform timeline.
+- **Belum ekspor MP4**, audio mastering, video background, video-layer, dan GPU shader editor; hanya preview serta simpan frame PNG.
+- `saveLayer` untuk efek blend/mask menambah beban GPU; aktifkan ECO dan batasi efek simultan pada HP. Animasi Canvas masih tergantung performa perangkat dan perlu profiling.
+- PCM, MP3, WAV, dan codec audio tertentu bisa berbeda hasil menurut decoder Android. Pengujian perangkat fisik dan uji regresi masih diperlukan.
 
-## Build APK via GitHub Actions
+## Cara build APK (GitHub Actions)
 
-1. Source proyek di-root repository GitHub, termasuk `.github/workflows/build-apk.yml`.
-2. Buka **Actions → Build Android APK**. Workflow juga aktif pada push ke `main`.
-3. Jika run sukses, ambil artifact `RannekiVisualizerStudio-debug-apk` yang berisi `app-debug.apk`.
-4. Debug APK hanya untuk pengujian; tidak setara rilis resmi aplikasi.
+1. Buka **Actions → Build Android APK** di repository ini.
+2. CI menginstal SDK melalui `android-actions/setup-android@v4` (v3 gagal akibat paket `tools` yang sudah dihapus), lalu menjalankan tes Java dan `gradle :app:assembleDebug`.
+3. Saat build sukses, ambil artifact `RannekiVisualizerStudio-debug-apk`.
+4. APK bertanda **debug**, bukan paket rilis produksi; jangan menganggap sudah stabil hanya karena kompilasi sukses.
 
-Tidak diperlukan server berbayar untuk preview/pemrosesan saat aplikasi digunakan. GitHub Actions hanya digunakan saat *build*. Proses decoding, animasi, serta rendering berat tetap mengonsumsi sumber daya HP; thermal throttling masih mungkin terjadi.
-
-## Smoke tests pure Java (tanpa Android SDK)
+## Tes JDK tanpa Android SDK
 
 ```bash
 mkdir -p out
-javac -d out app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope}.java tests/{SmokeTest,AudioReactiveTest}.java
+javac -d out app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack}.java tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest}.java
 java -cp out com.ranneki.visualizer.SmokeTest
 java -cp out com.ranneki.visualizer.AudioReactiveTest
+java -cp out com.ranneki.visualizer.AutomationTrackTest
 ```
 
-**Status:** source code V1.2 dalam pengembangan. Lulus tes matematika FFT dan envelope pada JVM; kompatibilitas UI/Android dan APK final tetap harus diverifikasi melalui Android build dan perangkat.
+## Roadmap bertahap
+
+1. **V1.3**: perbaikan CI; pengaturan detail efek, mask/blend, keyframe strength; verifikasi build.
+2. **V1.4**: model layer dinamis (duplikasi/reorder per-instance), timeline dengan multi-keyframe di semua parameter, preset JSON import/export.
+3. **V1.5**: renderer deterministik frame-by-frame untuk export video MP4 + audio AAC yang sinkron, uji dan profiling Android nyata. Ekspor tidak dijanjikan ringan hanya karena GPU tersedia.
+4. **V2**: kompositor OpenGL ES, shader, editor mask kompleks, performance profiling dan fitur visual lanjutan.
+
+Dukungan offline berarti **tidak ada server saat menjalankan aplikasi**; GitHub cloud hanya dipakai saat kompilasi. Analisis/render video tetap memakai CPU/GPU HP dan dapat meningkatkan suhu.

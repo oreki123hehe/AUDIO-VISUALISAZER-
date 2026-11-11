@@ -93,7 +93,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.2",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.3",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -132,8 +132,10 @@ public class MainActivity extends Activity {
         positionBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar,int progress,boolean user) {
                 if(user && player!=null && durationMs>0) {
-                    try { player.seekTo((int)(durationMs*progress/1000f)); }
-                    catch(Exception ignored) { }
+                    try {
+                        player.seekTo((int)(durationMs*progress/1000f));
+                        reactive.invalidate();
+                    } catch(Exception ignored) { }
                 }
             }
             public void onStartTrackingTouch(SeekBar bar) { }
@@ -172,7 +174,7 @@ public class MainActivity extends Activity {
         addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
         for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) addEffectPanel(controls,i);
         reorderPanels();
-        TextView help=text("Semua FX memakai peta audio sendiri. Pilih Frekuensi custom lalu set Hz min/max di menu Lanjutan. Kick dan snare masih perkiraan onset, bukan stem AI. V1.2 menyimpan PNG, belum ekspor MP4.",11,0xff9ba7c5,false);
+        TextView help=text("V1.3: tiap efek dapat memetakan ukuran, jumlah, kecepatan, dan opacity ke sumber audio berbeda. Mask & blend serta keyframe kekuatan tersedia; timeline masih berupa scrubber sederhana. Kick/snare adalah estimasi onset, bukan stem AI. Ekspor MP4 belum tersedia.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -228,6 +230,57 @@ public class MainActivity extends Activity {
         addFrequencySlider(advanced,"Max Hz",reactive.getMaxHz(effect),value->{
             reactive.setFrequency(effect,Math.min(value,reactive.getMinHz(effect)),value);
         });
+        TextView routes=text("ROUTING PER PARAMETER  •  INDEPENDEN",11,PURPLE,true);
+        advanced.addView(routes);
+        for(int property=0;property<ReactiveView.PROPERTY_NAMES.length;property++) {
+            final int param=property;
+            Button button=addButton(advanced,propertyTitle(effect,param),v->{});
+            button.setOnClickListener(v->{
+                int current=reactive.getPropertySource(effect,param);
+                reactive.setPropertySource(effect,param,current+1>=ReactiveView.SOURCES.length?-1:current+1);
+                button.setText(propertyTitle(effect,param));
+            });
+        }
+        LinearLayout material=row();
+        Button blend=addButton(material,"Blend: "+ReactiveView.BLEND_NAMES[reactive.getBlend(effect)],v->{});
+        blend.setOnClickListener(v->{
+            reactive.setBlend(effect,reactive.getBlend(effect)+1);
+            blend.setText("Blend: "+ReactiveView.BLEND_NAMES[reactive.getBlend(effect)]);
+        });
+        Button mask=addButton(material,"Mask: "+ReactiveView.MASK_NAMES[reactive.getMask(effect)],v->{});
+        mask.setOnClickListener(v->{
+            reactive.setMask(effect,reactive.getMask(effect)+1);
+            mask.setText("Mask: "+ReactiveView.MASK_NAMES[reactive.getMask(effect)]);
+        });
+        advanced.addView(material);
+        addSlider(advanced,"Mask Radius",reactive.getMaskRadius(effect),value->reactive.setMaskRadius(effect,value));
+        addSlider(advanced,"Arah (0=auto)",reactive.getDirection(effect),value->reactive.setDirection(effect,value));
+        TextView automationLabel=text("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect),11,PURPLE,false);
+        advanced.addView(automationLabel);
+        LinearLayout keyframes=row();
+        addButton(keyframes,"+ Titik",v->{
+            reactive.addStrengthKeyframe(effect,currentPosition());
+            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));
+        });
+        addButton(keyframes,"− Titik",v->{
+            reactive.removeStrengthKeyframe(effect,currentPosition());
+            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));
+        });
+        addButton(keyframes,"Hapus Semua",v->{
+            reactive.clearStrengthKeyframes(effect);
+            automationLabel.setText("KEYFRAME KEKUATAN: 0");
+        });
+        advanced.addView(keyframes);
+    }
+    private String propertyTitle(int effect,int param) {
+        int source=reactive.getPropertySource(effect,param);
+        return ReactiveView.PROPERTY_NAMES[param]+" ← "+
+                (source<0?"Manual":ReactiveView.SOURCES[source]);
+    }
+    private long currentPosition() {
+        if(player==null) return 0L;
+        try {return Math.max(0,player.getCurrentPosition());}
+        catch(Exception ignored) {return 0L;}
     }
     private void moveCard(int effect,int delta) {
         if(reactive.moveLayer(effect,delta)) reorderPanels();
@@ -332,6 +385,7 @@ public class MainActivity extends Activity {
             next.setDataSource(this,uri);
             next.prepare();
             next.setOnCompletionListener(mp->{playButton.setText("▶ Play");reactive.invalidate();});
+            next.setOnSeekCompleteListener(mp->reactive.invalidate());
             player=next;
             durationMs=player.getDuration();
         } catch(Exception e) {
@@ -415,6 +469,13 @@ public class MainActivity extends Activity {
             ed.putInt("release"+i,reactive.getRelease(i));
             ed.putInt("minHz"+i,reactive.getMinHz(i));
             ed.putInt("maxHz"+i,reactive.getMaxHz(i));
+            ed.putInt("blend"+i,reactive.getBlend(i));
+            ed.putInt("mask"+i,reactive.getMask(i));
+            ed.putInt("maskRadius"+i,reactive.getMaskRadius(i));
+            ed.putInt("direction"+i,reactive.getDirection(i));
+            ed.putString("automation"+i,reactive.encodeStrengthKeyframes(i));
+            for(int param=0;param<ReactiveView.PROPERTY_NAMES.length;param++)
+                ed.putInt("paramSource"+i+"_"+param,reactive.getPropertySource(i,param));
         }
         ed.apply();
         Toast.makeText(this,"Preset tersimpan di HP",Toast.LENGTH_SHORT).show();
@@ -438,6 +499,13 @@ public class MainActivity extends Activity {
             reactive.setAttack(i,prefs.getInt("attack"+i,18));
             reactive.setRelease(i,prefs.getInt("release"+i,165));
             reactive.setFrequency(i,prefs.getInt("minHz"+i,35),prefs.getInt("maxHz"+i,150));
+            reactive.setBlend(i,prefs.getInt("blend"+i,0));
+            reactive.setMask(i,prefs.getInt("mask"+i,0));
+            reactive.setMaskRadius(i,prefs.getInt("maskRadius"+i,65));
+            reactive.setDirection(i,prefs.getInt("direction"+i,0));
+            reactive.decodeStrengthKeyframes(i,prefs.getString("automation"+i,""));
+            for(int param=0;param<ReactiveView.PROPERTY_NAMES.length;param++)
+                reactive.setPropertySource(i,param,prefs.getInt("paramSource"+i+"_"+param,-1));
         }
         String[] encoded=prefs.getString("layerOrder","").split(",");
         if(encoded.length==ReactiveView.EFFECT_COUNT) {

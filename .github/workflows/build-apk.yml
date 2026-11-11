@@ -23,6 +23,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify offline audio and keyframe algorithms
+        shell: bash
+        run: |
+          mkdir -p build/pure-tests
+          javac -d build/pure-tests \
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest; do
+            java -cp build/pure-tests com.ranneki.visualizer.$test
+          done
       - name: Assemble debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4

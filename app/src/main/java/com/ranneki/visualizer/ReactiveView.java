@@ -10,6 +10,8 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.os.SystemClock;
 import android.view.View;
 import java.util.Random;
@@ -26,8 +28,15 @@ public final class ReactiveView extends View {
             "Cahaya • Glow", "Distorsi • Glitch"};
     public static final String[] SOURCES={"Kick", "Bass", "Kick + Bass", "Treble",
             "Snare", "Frekuensi custom", "Mid"};
+    public static final String[] PROPERTY_NAMES={"Ukuran", "Jumlah", "Kecepatan", "Opacity"};
+    public static final String[] BLEND_NAMES={"Normal", "Add", "Screen", "Multiply"};
+    public static final String[] MASK_NAMES={"Tanpa mask", "Lingkaran", "Atas", "Bawah"};
     private static final int DESIGN_WIDTH=400;
+    private static final int PROPERTY_COUNT=4;
     private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint blendPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path reusableFlame=new Path();
+    private final Path clipPath=new Path();
     private final Random rng=new Random(14350);
     // Effects with particles: dust, fire, rain, smoke, snow, sparks.
     private final Particle[][] particles=new Particle[6][];
@@ -37,7 +46,13 @@ public final class ReactiveView extends View {
             velocity=new int[EFFECT_COUNT], threshold=new int[EFFECT_COUNT],
             attackMs=new int[EFFECT_COUNT], releaseMs=new int[EFFECT_COUNT],
             minHz=new int[EFFECT_COUNT], maxHz=new int[EFFECT_COUNT],
-            source=new int[EFFECT_COUNT], layerOrder=new int[EFFECT_COUNT];
+            source=new int[EFFECT_COUNT], layerOrder=new int[EFFECT_COUNT],
+            blend=new int[EFFECT_COUNT], mask=new int[EFFECT_COUNT],
+            maskRadius=new int[EFFECT_COUNT], direction=new int[EFFECT_COUNT];
+    private final int[][] propertySource=new int[EFFECT_COUNT][PROPERTY_COUNT];
+    private final float[][] propertyEnvelope=new float[EFFECT_COUNT][PROPERTY_COUNT];
+    private final AutomationTrack[] automation=new AutomationTrack[EFFECT_COUNT];
+    private long framePositionMs=0L;
     private final boolean[] enabled=new boolean[EFFECT_COUNT];
     private final float[] envelope=new float[EFFECT_COUNT];
     private final float[] spectralBins=new float[BandSpectrum.COUNT];
@@ -79,6 +94,9 @@ public final class ReactiveView extends View {
             strength[i]=80;size[i]=55;density[i]=60;opacity[i]=75;
             velocity[i]=50;threshold[i]=15;attackMs[i]=18;releaseMs[i]=165;
             minHz[i]=35;maxHz[i]=150;source[i]=defaultSources[i];layerOrder[i]=i;
+            maskRadius[i]=65;direction[i]=0;
+            automation[i]=new AutomationTrack();
+            java.util.Arrays.fill(propertySource[i],-1);
         }
     }
     public void setEconomyMode(boolean v) {economyMode=v;invalidate();}
@@ -92,7 +110,10 @@ public final class ReactiveView extends View {
     public void setClock(AudioClock value) {clock=value;invalidate();}
     public void setTrack(AudioAnalyzer.Track value) {
         track=value;previousPosition=-1;previousWater=0f;previousSparks=0f;
-        for(int i=0;i<envelope.length;i++) envelope[i]=0f;
+        for(int i=0;i<envelope.length;i++) {
+            envelope[i]=0f;
+            java.util.Arrays.fill(propertyEnvelope[i],0f);
+        }
         invalidate();
     }
     public void setBackdrop(Bitmap value) {
@@ -128,6 +149,31 @@ public final class ReactiveView extends View {
     public int getRelease(int i) {return releaseMs[i];}
     public int getMinHz(int i) {return minHz[i];}
     public int getMaxHz(int i) {return maxHz[i];}
+    /** Independent per-property audio routes: -1 = no additional modulation. */
+    public int getPropertySource(int fx,int property) {return propertySource[fx][property];}
+    public void setPropertySource(int fx,int property,int value) {
+        propertySource[fx][property]=value < 0 ? -1 : value % SOURCES.length;
+        propertyEnvelope[fx][property]=0;
+        invalidate();
+    }
+    public int getBlend(int i) {return blend[i];}
+    public void setBlend(int i,int value) {blend[i]=Math.floorMod(value,BLEND_NAMES.length);invalidate();}
+    public int getMask(int i) {return mask[i];}
+    public void setMask(int i,int value) {mask[i]=Math.floorMod(value,MASK_NAMES.length);invalidate();}
+    public int getMaskRadius(int i) {return maskRadius[i];}
+    public void setMaskRadius(int i,int value) {maskRadius[i]=limit(value,0,100);invalidate();}
+    public int getDirection(int i) {return direction[i];}
+    public void setDirection(int i,int value) {direction[i]=limit(value,0,100);invalidate();}
+    public int keyframeCount(int i) {return automation[i].count();}
+    public void addStrengthKeyframe(int i,long positionMs) {
+        automation[i].put(positionMs,strength[i]);invalidate();
+    }
+    public void removeStrengthKeyframe(int i,long positionMs) {
+        automation[i].removeNear(positionMs,180);invalidate();
+    }
+    public void clearStrengthKeyframes(int i) {automation[i].clear();invalidate();}
+    public String encodeStrengthKeyframes(int i) {return automation[i].encode();}
+    public void decodeStrengthKeyframes(int i,String text) {automation[i].decode(text);invalidate();}
     public int[] getLayerOrder() {return layerOrder.clone();}
     public void setLayerOrder(int[] value) {
         if(value==null || value.length!=EFFECT_COUNT) return;
@@ -167,7 +213,10 @@ public final class ReactiveView extends View {
         if(group==5) {q.vy=-.5f-rng.nextFloat()*.5f;q.vx=(rng.nextFloat()-.5f)*.55f;}
     }
     private float readSource(int i,long position) {
-        switch(source[i]) {
+        return readSourceId(source[i],i,position);
+    }
+    private float readSourceId(int src,int i,long position) {
+        switch(src) {
             case 0:return live.kick;
             case 1:return live.bass;
             case 2:return clamp(live.bass*.58f+live.kick*.88f);
@@ -193,10 +242,17 @@ public final class ReactiveView extends View {
             for(Ripple ring:ripples) ring.active=false;
         }
         previousPosition=position;
+        framePositionMs=position;
         if(playing) {
             for(int i=0;i<EFFECT_COUNT;i++) {
                 envelope[i]=ReactiveEnvelope.step(envelope[i],readSource(i,position),
                         threshold[i]/100f,attackMs[i],releaseMs[i],dt*1000);
+                for(int prop=0;prop<PROPERTY_COUNT;prop++) {
+                    int src=propertySource[i][prop];
+                    if(src>=0) propertyEnvelope[i][prop]=ReactiveEnvelope.step(
+                            propertyEnvelope[i][prop],readSourceId(src,i,position),
+                            threshold[i]/100f,attackMs[i],releaseMs[i],dt*1000);
+                }
             }
             phase+=dt;
             float water=envelope[WATER];
@@ -214,6 +270,18 @@ public final class ReactiveView extends View {
                 for(Particle q:particles[5]) reset(q,5,false);
             }
             previousWater=water;previousSparks=sparks;
+        } else if(track!=null) {
+            // Scrubbing or paused preview should reflect the selected timestamp,
+            // not stale effect values from the last playback frame.
+            for(int i=0;i<EFFECT_COUNT;i++) {
+                envelope[i]=ReactiveEnvelope.step(0,readSource(i,position),
+                        threshold[i]/100f,0,0,0);
+                for(int prop=0;prop<PROPERTY_COUNT;prop++) {
+                    int src=propertySource[i][prop];
+                    propertyEnvelope[i][prop]=src<0?0:ReactiveEnvelope.step(0,
+                            readSourceId(src,i,position),threshold[i]/100f,0,0,0);
+                }
+            }
         }
         render(canvas,getWidth(),getHeight(),playing?dt:0f);
         if(playing) postInvalidateDelayed(economyMode?33:16);
@@ -240,6 +308,12 @@ public final class ReactiveView extends View {
         drawBackground(canvas,h);
         for(int fx:layerOrder) {
             if(!enabled[fx]) continue;
+            int save=canvas.save();
+            applyMask(canvas,fx,h);
+            if(blend[fx]!=0) {
+                blendPaint.setXfermode(new PorterDuffXfermode(blendMode(fx)));
+                canvas.saveLayer(0,0,400,h,blendPaint);
+            }
             switch(fx) {
                 case DUST:drawDust(canvas,h,dt);break;
                 case FIRE:drawFire(canvas,h,dt);break;
@@ -252,17 +326,59 @@ public final class ReactiveView extends View {
                 case GLOW:drawGlow(canvas,h);break;
                 case GLITCH:drawGlitch(canvas,h);break;
             }
+            if(blend[fx]!=0) canvas.restore();
+            canvas.restoreToCount(save);
         }
         if(spectrumEnabled) drawSpectrumRing(canvas,h);
         canvas.restore();
     }
-    private float intensity(int i) {return envelope[i]*strength[i]/100f;}
-    private float volume(int i) {return .2f+size[i]/100f*1.8f;}
-    private float amount(int i) {
-        return density[i]/100f*(economyMode?.62f:1f);
+    private PorterDuff.Mode blendMode(int fx) {
+        switch(blend[fx]) {
+            case 1: return PorterDuff.Mode.ADD;
+            case 2: return PorterDuff.Mode.SCREEN;
+            case 3: return PorterDuff.Mode.MULTIPLY;
+            default: return PorterDuff.Mode.SRC_OVER;
+        }
     }
-    private float opacity(int i) {return opacity[i]/100f;}
-    private float speed(int i) {return .15f+velocity[i]/100f*2.7f;}
+    private void applyMask(Canvas canvas,int fx,int h) {
+        switch(mask[fx]) {
+            case 1:
+                clipPath.reset();
+                clipPath.addCircle(200,h*.5f,Math.max(1,maskRadius[fx]/100f*240),
+                        Path.Direction.CW);
+                canvas.clipPath(clipPath);
+                break;
+            case 2: canvas.clipRect(0,0,400,h*maskRadius[fx]/100f);break;
+            case 3: canvas.clipRect(0,h*(1-maskRadius[fx]/100f),400,h);break;
+            default:break;
+        }
+    }
+    private float parameter(int fx,int property) {
+        return propertySource[fx][property]<0?0:propertyEnvelope[fx][property];
+    }
+    private float intensity(int i) {
+        return envelope[i]*automation[i].valueAt(framePositionMs,strength[i])/100f;
+    }
+    private float volume(int i) {
+        return (.2f+size[i]/100f*1.8f)*(1+parameter(i,0)*1.1f);
+    }
+    private float amount(int i) {
+        float modulation=propertySource[i][1]<0?1f:(.45f+parameter(i,1)*1.55f);
+        return Math.min(1f,density[i]/100f*(economyMode?.62f:1f)*modulation);
+    }
+    private float opacity(int i) {
+        return opacity[i]/100f*(propertySource[i][3]<0?1f:(.20f+parameter(i,3)*.8f));
+    }
+    private float speed(int i) {
+        return (.15f+velocity[i]/100f*2.7f)*(1+parameter(i,2)*2.2f);
+    }
+    private void applyWind(Particle q,int fx,float dt) {
+        if(direction[fx] == 0 || dt<=0) return;
+        double angle=(direction[fx]-1)*2*Math.PI/99;
+        float movement=dt*speed(fx)*(.06f+intensity(fx)*.12f);
+        q.x+=(float)Math.cos(angle)*movement;
+        q.y+=(float)Math.sin(angle)*movement;
+    }
     private void drawBackground(Canvas c,int h) {
         p.setStyle(Paint.Style.FILL);
         p.setShader(new LinearGradient(0,0,360,h,
@@ -291,6 +407,7 @@ public final class ReactiveView extends View {
         int count=(int)(particles[0].length*amount(DUST));
         for(int i=0;i<count;i++) {
             Particle q=particles[0][i];
+            applyWind(q,DUST,dt);
             q.x+=(q.vx+power*.08f)*dt*speed(DUST);
             q.y+=q.vy*dt*speed(DUST)*(1+power*1.7f);
             if(q.y<-.02f||q.x>1.05f||q.x<-.05f) reset(q,0,false);
@@ -304,7 +421,7 @@ public final class ReactiveView extends View {
             float x=(i+.5f)*400/14f;
             float flame=(10f+28f*power)*(0.7f+((i*17)%9)/18f)*vol;
             float sway=(float)Math.sin(phase*7*speed(FIRE)+i)*7;
-            Path path=new Path();path.moveTo(x-13*vol,h);
+            Path path=reusableFlame;path.reset();path.moveTo(x-13*vol,h);
             path.quadTo(x+sway-13,h-flame*.55f,x+sway,h-flame);
             path.quadTo(x+sway+10,h-flame*.35f,x+15*vol,h);path.close();
             p.setColor(rgba(255,100+(i%4)*13,39,(.32f+power*.4f)*opacity(FIRE)));
@@ -313,6 +430,7 @@ public final class ReactiveView extends View {
         int count=(int)(particles[1].length*amount(FIRE));
         for(int i=0;i<count;i++) {
             Particle q=particles[1][i];
+            applyWind(q,FIRE,dt);
             q.x+=(q.vx+.03f*(float)Math.sin(phase*3+i))*dt*speed(FIRE)*(1+power);
             q.y+=q.vy*dt*speed(FIRE)*(.6f+power*2.4f);
             if(q.y<0f||q.x<0||q.x>1) reset(q,1,false);
@@ -326,6 +444,7 @@ public final class ReactiveView extends View {
         p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);
         for(int i=0;i<count;i++) {
             Particle q=particles[2][i];
+            applyWind(q,RAIN,dt);
             q.x+=q.vx*dt*speed(RAIN)*(.5f+power);
             q.y+=q.vy*dt*speed(RAIN)*(.65f+power*2f);
             if(q.y>1.1f||q.x>1.1f) reset(q,2,false);
@@ -357,6 +476,7 @@ public final class ReactiveView extends View {
         int count=(int)(particles[3].length*amount(SMOKE));
         for(int i=0;i<count;i++) {
             Particle q=particles[3][i];
+            applyWind(q,SMOKE,dt);
             q.x+=(q.vx+(float)Math.sin(phase*2+i)*.07f)*dt*speed(SMOKE);
             q.y+=q.vy*dt*speed(SMOKE)*(1+power);
             if(q.y<-.08f||q.x<-.05f||q.x>1.05f) reset(q,3,false);
@@ -369,6 +489,7 @@ public final class ReactiveView extends View {
         int count=(int)(particles[4].length*amount(SNOW));
         for(int i=0;i<count;i++) {
             Particle q=particles[4][i];
+            applyWind(q,SNOW,dt);
             q.x+=(q.vx*.1f+(float)Math.sin(phase*.9f+i)*.025f)*dt*speed(SNOW);
             q.y+=q.vy*dt*speed(SNOW)*(1+power*1.2f);
             if(q.y>1.05f||q.x<-.05f||q.x>1.05f) reset(q,4,false);
@@ -382,6 +503,7 @@ public final class ReactiveView extends View {
         p.setStyle(Paint.Style.STROKE);
         for(int i=0;i<count;i++) {
             Particle q=particles[5][i];
+            applyWind(q,SPARKS,dt);
             q.x+=q.vx*dt*speed(SPARKS)*(1+power*2f);
             q.y+=q.vy*dt*speed(SPARKS)*(1+power*2f);
             if(q.y<-.08f||q.x<0||q.x>1) reset(q,5,false);
