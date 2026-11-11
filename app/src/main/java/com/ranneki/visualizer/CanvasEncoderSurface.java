@@ -23,6 +23,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private boolean textureAllocated=false;
     CanvasEncoderSurface(Surface codecSurface,int width,int height,String fragmentSource) {
         this.surface=codecSurface;this.width=width;this.height=height;
+        try {
         display=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
         if(display==EGL14.EGL_NO_DISPLAY)throw new IllegalStateException("EGL display unavailable");
         int[] version=new int[2];
@@ -67,6 +68,11 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
+        } catch (RuntimeException error) {
+            // Invalid user GLSL must never leave an EGL context or codec surface behind.
+            try {close();} catch(Exception ignored) { }
+            throw error;
+        }
     }
     private static FloatBuffer floats(float[] a) {
         FloatBuffer b=ByteBuffer.allocateDirect(a.length*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
