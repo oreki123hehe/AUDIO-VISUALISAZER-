@@ -20,6 +20,10 @@ public final class TimelineView extends View {
     private int focusLayer=-1;
     private SeekListener seekListener;
     private final float dp;
+    private static final int DRAG_NONE=0, DRAG_START=1, DRAG_END=2, DRAG_MOVE=3, DRAG_SCRUB=4;
+    private int dragMode=DRAG_NONE, dragLayer=-1;
+    private long dragOriginMs, dragLayerStart, dragLayerEnd;
+    private float dragBarLeft, dragBarWidth;
     public TimelineView(Context ctx) {
         super(ctx);
         dp=getResources().getDisplayMetrics().density;
@@ -35,6 +39,12 @@ public final class TimelineView extends View {
     }
     public void setFocusLayer(int id){focusLayer=id;invalidate();}
     public void refresh(){invalidate();}
+    private int laneStart(int[] ids){
+        int first=0;
+        if(focusLayer>=0)for(int i=0;i<ids.length;i++)
+            if(ids[i]==focusLayer){first=Math.max(0,i-1);break;}
+        return Math.min(first,Math.max(0,ids.length-MAX_VISIBLE_LANES));
+    }
     private float x(long ms,float left,float width) {
         return left+TimelineMath.fraction(ms,durationMs)*width;
     }
@@ -61,11 +71,7 @@ public final class TimelineView extends View {
         }
         if(scene!=null && durationMs>0) {
             int[] ids=scene.getLayerOrder();
-            int start=0;
-            if(focusLayer>=0) {
-                for(int i=0;i<ids.length;i++)if(ids[i]==focusLayer){start=Math.max(0,i-1);break;}
-            }
-            start=Math.min(start,Math.max(0,ids.length-MAX_VISIBLE_LANES));
+            int start=laneStart(ids);
             int show=Math.min(MAX_VISIBLE_LANES,ids.length-start);
             for(int i=0;i<show;i++) {
                 int id=ids[i+start];float top=75*dp+i*25*dp;
@@ -96,13 +102,70 @@ public final class TimelineView extends View {
         c.drawLine(playX,17*dp,playX,h-3*dp,paint);
         paint.setColor(0xffffce87);c.drawCircle(playX,16*dp,3.5f*dp,paint);
     }
+    /** Drag lane edges to trim; drag the middle to move a layer's active time window. */
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if(event.getActionMasked()==MotionEvent.ACTION_DOWN||event.getActionMasked()==MotionEvent.ACTION_MOVE){
-            if(durationMs<=0||seekListener==null)return true;
-            float left=9*dp,span=Math.max(1,getWidth()-18*dp);
-            long target=TimelineMath.positionAt((event.getX()-left)/span,durationMs);
-            setPosition(target);seekListener.seekTo(target);return true;
+        int action=event.getActionMasked();
+        if(action==MotionEvent.ACTION_DOWN){
+            if(durationMs<=0)return true;
+            dragMode=DRAG_SCRUB;dragLayer=-1;
+            float px=event.getX(),py=event.getY();
+            if(scene!=null && py>=60*dp) {
+                int[] ids=scene.getLayerOrder();
+                int first=laneStart(ids);
+                for(int row=0;row<Math.min(MAX_VISIBLE_LANES,ids.length-first);row++) {
+                    float top=75*dp+row*25*dp;
+                    if(py<top-15*dp||py>top+11*dp)continue;
+                    int layer=ids[first+row];
+                    float left=9*dp,right=getWidth()-9*dp;
+                    float startX=left+Math.max(65*dp,(right-left)*.29f), width=right-startX;
+                    long a=scene.getLayerStart(layer), b=scene.getLayerEnd(layer);
+                    float x1=x(a,startX,width),x2=x(b==Long.MAX_VALUE?durationMs:b,startX,width);
+                    int mode=DRAG_NONE;
+                    if(Math.abs(px-x1)<=12*dp)mode=DRAG_START;
+                    else if(Math.abs(px-x2)<=12*dp)mode=DRAG_END;
+                    else if(px>x1 && px<x2 && px>=startX)mode=DRAG_MOVE;
+                    if(mode!=DRAG_NONE){
+                        dragMode=mode;dragLayer=layer;
+                        dragBarLeft=startX;dragBarWidth=width;
+                        dragOriginMs=TimelineMath.positionAt((px-startX)/width,durationMs);
+                        dragLayerStart=a;dragLayerEnd=b==Long.MAX_VALUE?durationMs:b;
+                        setFocusLayer(layer);
+                    }
+                    break;
+                }
+            }
+            if(dragMode==DRAG_SCRUB)seekToX(px);
+            return true;
         }
-        return event.getActionMasked()==MotionEvent.ACTION_UP||super.onTouchEvent(event);
+        if(action==MotionEvent.ACTION_MOVE){
+            if(dragMode==DRAG_SCRUB)seekToX(event.getX());
+            else if(scene!=null&&dragLayer>=0){
+                long ms=TimelineMath.positionAt((event.getX()-dragBarLeft)/Math.max(1f,dragBarWidth),durationMs);
+                long min=100;
+                if(dragMode==DRAG_START){
+                    scene.setLayerStart(dragLayer,Math.min(ms,Math.max(0,dragLayerEnd-min)));
+                }else if(dragMode==DRAG_END){
+                    scene.setLayerEnd(dragLayer,Math.max(dragLayerStart+min,ms));
+                }else if(dragMode==DRAG_MOVE){
+                    long delta=ms-dragOriginMs;
+                    long width=dragLayerEnd-dragLayerStart;
+                    long newStart=Math.max(0,Math.min(Math.max(0,durationMs-width),dragLayerStart+delta));
+                    scene.setLayerStart(dragLayer,newStart);
+                    scene.setLayerEnd(dragLayer,newStart+width);
+                }
+                refresh();
+            }
+            return true;
+        }
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){
+            dragMode=DRAG_NONE;dragLayer=-1;return true;
+        }
+        return super.onTouchEvent(event);
+    }
+    private void seekToX(float screenX){
+        float left=9*dp, span=Math.max(1,getWidth()-18*dp);
+        long time=TimelineMath.positionAt((screenX-left)/span,durationMs);
+        setPosition(time);
+        if(seekListener!=null)seekListener.seekTo(time);
     }
 }

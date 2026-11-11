@@ -69,12 +69,9 @@ for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParameters
 
 GitHub Actions can establish that the Android project compiles and the pure Java tests pass. It cannot measure Poco F6 temperature, thermally sustainable FPS, hardware H.264 encoder stability or actual playback sync on that phone. After device testing, use the benchmark report, a saved MP4, and optionally Android Studio/Perfetto traces to diagnose performance. No dedicated cloud server or Termux is needed at runtime.
 
-### Android emulator integration smoke tests (separate workflow)
+## Post-V1.8 verified development milestone
 
-
-`.github/workflows/android-emulator-smoke.yml` builds a Pixel 4 emulator (API 34)
-with Android SDK, launches the editor and generates a three-second 110 Hz WAV
-with 2 Hz rhythmic dynamics. It decodes/analyzes the synthetic audio, renders
-90 frames of reactive dust/glow, encodes H.264 + AAC and checks that the final
-MP4 has **both** tracks. This does not validate thermals or FPS of Poco F6.
-The Google APIs emulator depends on virtual acceleration and software GL.
+- UI now supports exporting/importing `.json` scene presets through Android Storage Access Framework (SAF), with 1 MiB input limit and supported layer type validation. Presets include layer order, numeric automation curves and image URI references, **not media bytes**. Re-import original images/audio when their URI permissions do not transfer.
+- Fixed card reordering to anchor below the Add Layer button rather than a fragile hard-coded layout index; imported presets rebuild their edit cards.
+- Emulator integration no longer depends on AndroidX instrumentation artifacts. The debug-only `SmokeTestActivity` generates synthetic rhythmic WAV, tests FFT analysis, renders 2 seconds of H.264 + AAC offline, verifies both MP4 tracks using `MediaExtractor`, and writes a PASS/FAIL report for CI. Test activity is only packaged in debug variants.
+- **Release blocker:** Device performance, Android hardware codec combinations, audio A/V sync and thermals still require a physical Poco F6 test. CI emulator pass is not a hardware benchmark.

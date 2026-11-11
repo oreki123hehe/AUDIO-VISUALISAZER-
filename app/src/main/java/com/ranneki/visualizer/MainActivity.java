@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Native Android audio-reactive editor. The finished application works offline. */
 public class MainActivity extends Activity {
     private static final int PICK_AUDIO=101, PICK_IMAGE=102, PICK_EXPORT=103,
-            PICK_LAYER_IMAGE=104;
+            PICK_LAYER_IMAGE=104, PICK_PRESET_OPEN=105, PICK_PRESET_SAVE=106;
     private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
     private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
     private final ExecutorService exportWorker=Executors.newSingleThreadExecutor();
@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private final LinearLayout[] panels=new LinearLayout[ReactiveView.MAX_LAYERS];
     private final int[] selectedKeyframeParam=new int[ReactiveView.MAX_LAYERS];
     private LinearLayout effectContainer;
+    private Button addLayerButton;
     private ReactiveView reactive;
     private MediaPlayer player;
     private Button playButton, ratioButton;
@@ -130,6 +131,8 @@ public class MainActivity extends Activity {
         addButton(commandsRow,"◷ Preview 15s",v->benchmarkPreview());
         addButton(commandsRow,"▣ Benchmark MP4 8s",v->runBenchmark());
         addButton(commandsRow,"✓ Preset",v->savePreset());
+        addButton(commandsRow,"⇧ Simpan File Preset",v->createProjectFile());
+        addButton(commandsRow,"⇩ Buka File Preset",v->choose("application/json",PICK_PRESET_OPEN));
         root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
 
         reactive=new ReactiveView(this);
@@ -214,7 +217,7 @@ public class MainActivity extends Activity {
         addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
         addSlider(controls,"GPU RGB Glitch Ekspor",gpuChromatic,value->gpuChromatic=value);
         addSlider(controls,"GPU Vignette Ekspor",gpuVignette,value->gpuVignette=value);
-        addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
+        addLayerButton=addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
         for(int id:reactive.getLayerOrder()) addEffectPanel(controls,id);
         reorderPanels();
         TextView help=text("V1.8: waveform timeline dan keyframe 16 parameter per layer. Efek mengikuti kick/bass secara independen. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
@@ -452,7 +455,7 @@ public class MainActivity extends Activity {
         for(LinearLayout card:panels) if(card!=null && card.getParent()==effectContainer)
             effectContainer.removeView(card);
         // Section heading, spectrum toggle, and two global sliders stay above FX cards.
-        int index=5;
+        int index=addLayerButton==null?effectContainer.getChildCount():effectContainer.indexOfChild(addLayerButton)+1;
         for(int effect:reactive.getLayerOrder()) {
             LinearLayout card=panels[effect];
             if(card!=null) {
@@ -543,6 +546,8 @@ public class MainActivity extends Activity {
                 status.setText("Gambar layer berhasil dimuat");
             }catch(Exception e){status.setText("Gambar layer gagal: "+e.getMessage());}
         } else if(request==PICK_EXPORT) exportMp4(uri);
+        else if(request==PICK_PRESET_OPEN) importProjectFile(uri);
+        else if(request==PICK_PRESET_SAVE) saveProjectFile(uri);
     }
     private void loadAudio(Uri uri) {
         musicUri=uri;
@@ -634,6 +639,75 @@ public class MainActivity extends Activity {
             prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();
             toast("Preset layer tersimpan offline");
         }catch(Exception e){status.setText("Preset gagal: "+e.getMessage());}
+    }
+    private void createProjectFile() {
+        if(exporting){toast("Selesaikan ekspor terlebih dahulu");return;}
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.setType("application/json");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.putExtra(Intent.EXTRA_TITLE,"ranneki-studio-project.json");
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        startActivityForResult(intent,PICK_PRESET_SAVE);
+    }
+    private void saveProjectFile(Uri uri) {
+        try {
+            String data=reactive.exportProjectJson();
+            try(OutputStream out=getContentResolver().openOutputStream(uri,"wt")) {
+                if(out==null)throw new java.io.IOException("Tidak dapat menulis file");
+                out.write(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                out.flush();
+            }
+            status.setText("Preset JSON tersimpan. Media sumber perlu disimpan secara terpisah.");
+        } catch(Exception e){status.setText("Gagal menyimpan preset: "+e.getMessage());}
+    }
+    private void importProjectFile(Uri uri) {
+        if(exporting){toast("Selesaikan ekspor terlebih dahulu");return;}
+        try {
+            byte[] data;
+            try(InputStream in=getContentResolver().openInputStream(uri)) {
+                if(in==null)throw new java.io.IOException("File tidak bisa dibaca");
+                java.io.ByteArrayOutputStream buf=new java.io.ByteArrayOutputStream();
+                byte[] block=new byte[8192];int read;
+                while((read=in.read(block))!=-1){
+                    if(buf.size()+read>1024*1024)throw new java.io.IOException("Preset maksimal 1 MB");
+                    buf.write(block,0,read);
+                }
+                data=buf.toByteArray();
+            }
+            if(data.length==0)throw new java.io.IOException("File kosong");
+            String json=new String(data,java.nio.charset.StandardCharsets.UTF_8);
+            org.json.JSONObject parsed=new org.json.JSONObject(json);
+            org.json.JSONArray layers=parsed.getJSONArray("layers");
+            if(layers.length()>ReactiveView.MAX_LAYERS)
+                throw new IllegalArgumentException("Lebih dari 48 layer");
+            for(int i=0;i<layers.length();i++) {
+                org.json.JSONObject item=layers.getJSONObject(i);
+                int type=item.getInt("type");
+                if(type<0 || type>=ReactiveView.LAYER_TYPE_COUNT)
+                    throw new IllegalArgumentException("Tipe layer tidak dikenal");
+            }
+            String previous=reactive.exportProjectJson();
+            if(!reactive.importProjectJson(json)){
+                reactive.importProjectJson(previous);
+                throw new java.io.IOException("Isi preset tidak valid");
+            }
+            restoreLayerImages();
+            refreshLayerEditor();
+            prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();
+            status.setText("Preset berhasil diimpor: "+reactive.getLayerCount()+" layer. Tambahkan media bila diperlukan.");
+        }catch(Exception e){status.setText("Impor preset gagal: "+e.getMessage());}
+    }
+    private void refreshLayerEditor() {
+        if(effectContainer==null)return;
+        for(int i=0;i<panels.length;i++) {
+            LinearLayout card=panels[i];
+            if(card!=null && card.getParent()==effectContainer)effectContainer.removeView(card);
+            panels[i]=null;toggleButtons[i]=null;mappingButtons[i]=null;
+        }
+        for(int id:reactive.getLayerOrder())addEffectPanel(effectContainer,id);
+        reorderPanels();
+        if(timelineView!=null){timelineView.setScene(reactive);timelineView.refresh();}
+        ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
     }
     private void preloadPresetSettings() {
         String saved=prefs.getString("projectV2",null);

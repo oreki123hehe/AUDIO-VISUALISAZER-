@@ -1,4 +1,4 @@
-name: Android Emulator Pipeline Smoke Test
+name: Android Emulator Offline MP4 Smoke Test
 on:
   push:
     branches: [main]
@@ -18,15 +18,15 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
-      - name: Install SDK and emulator dependencies
+      - name: Install Android SDK
         run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Enable KVM for Android emulator
+      - name: Enable hardware virtualization
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
-      - name: Launch and export a synthetic WAV on emulator
+      - name: Boot emulator and verify H.264/AAC output
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -35,13 +35,19 @@ jobs:
           profile: pixel_4
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
-          script: gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon
-      - name: Upload reports
+          script: |
+            gradle :app:assembleDebug --stacktrace --no-daemon
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -n com.ranneki.visualizer/.SmokeTestActivity
+            for attempt in $(seq 1 90); do
+              if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi
+              sleep 2
+            done
+            adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
+            grep '^PASS:' smoke-result.txt
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: emulator-androidTest-results
-          path: |
-            app/build/reports/androidTests/
-            app/build/outputs/androidTest-results/
+          name: emulator-pipeline-report
+          path: smoke-result.txt
           if-no-files-found: ignore
