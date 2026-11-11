@@ -109,7 +109,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.7",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.8",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -127,7 +127,8 @@ public class MainActivity extends Activity {
         addButton(commandsRow,"▤ Simpan PNG",v->saveImage());
         addButton(commandsRow,"● Export MP4",v->chooseExport());
         addButton(commandsRow,"◷ Performa",v->showPerformance());
-        addButton(commandsRow,"◷ Benchmark",v->benchmarkPreview());
+        addButton(commandsRow,"◷ Preview 15s",v->benchmarkPreview());
+        addButton(commandsRow,"▣ Benchmark MP4 8s",v->runBenchmark());
         addButton(commandsRow,"✓ Preset",v->savePreset());
         root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
 
@@ -707,6 +708,44 @@ public class MainActivity extends Activity {
             }
         });
     }
+    /** Measures the complete offline H.264/AAC pipeline on the actual Android device. */
+    private void runBenchmark() {
+        if(musicUri==null||!analyzed||reactive.getTrack()==null) {
+            toast("Impor lagu dan tunggu analisis dulu");return;
+        }
+        if(exporting) {toast("Render lain sedang berjalan");return;}
+        if(player!=null)try{player.pause();playButton.setText("▶ Play");}catch(Exception ignored){}
+        final ReactiveView scene=new ReactiveView(this);
+        if(!scene.importProjectJson(reactive.exportProjectJson())){
+            status.setText("Benchmark gagal: scene tidak valid");return;
+        }
+        scene.setTrack(reactive.getTrack());
+        Bitmap background=reactive.getBackdrop();
+        if(background!=null&&!background.isRecycled())scene.setBackdrop(background.copy(Bitmap.Config.ARGB_8888,false));
+        reactive.copyImageLayersTo(scene);
+        scene.setEconomyMode(false);
+        final ExportProfile profile=new ExportProfile(720,1280,30,75,25,20);
+        final Uri input=musicUri;
+        exporting=true;exportCancel.set(false);
+        status.setText("Benchmark MP4 8s dimulai • ketuk status untuk membatalkan");
+        status.setOnClickListener(v->{if(exporting){exportCancel.set(true);status.setText("Membatalkan benchmark...");}});
+        exportWorker.execute(()->{
+            try {
+                String report=Mp4Exporter.benchmark(getApplicationContext(),input,scene,profile,
+                        Math.min(durationMs,8000),exportCancel,(percent,stage)->
+                            runOnUiThread(()->status.setText("Benchmark "+stage+" "+percent+"% • ketuk batal")));
+                lastExportReport=report;
+                runOnUiThread(()->{status.setText("Benchmark selesai • buka Performa untuk hasil");showPerformance();});
+            }catch(Exception error){
+                runOnUiThread(()->status.setText("Benchmark gagal: "+error.getMessage()));
+            }finally{
+                Bitmap copied=scene.getBackdrop();if(copied!=null&&!copied.isRecycled())copied.recycle();
+                scene.recycleLayerImages();exporting=false;
+                runOnUiThread(()->status.setOnClickListener(null));
+            }
+        });
+    }
+
     /** Actual device metrics require running the app; no Poco F6 hardware is available in CI. */
     private void benchmarkPreview() {
         if(player==null || !analyzed) {toast("Impor dan analisis musik dulu");return;}

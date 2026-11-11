@@ -18,6 +18,7 @@ final class ThermalInfo {
         return peak;
     }
     int peak() { return peak; }
+    static boolean shouldStop(int status) { return status >= 3; }
     static String label(int status) {
         switch(status) {
             case 0: return "NONE";

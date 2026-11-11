@@ -24,7 +24,23 @@ public final class Mp4Exporter {
     private Mp4Exporter() {}
     public static String export(Context context, Uri audio, Uri target, ReactiveView scene,
             ExportProfile profile,int durationMs,AtomicBoolean cancelled,Progress progress) throws Exception {
-        if(profile==null||durationMs<=0||scene.getTrack()==null)
+        if(target==null)throw new IllegalArgumentException("Lokasi keluaran belum dipilih");
+        return produce(context,audio,target,null,scene,profile,durationMs,cancelled,progress);
+    }
+    /** Real hardware benchmark: creates a short H.264 + AAC file in app cache, then removes it. */
+    public static String benchmark(Context context, Uri audio, ReactiveView scene,
+            ExportProfile profile,int durationMs,AtomicBoolean cancelled,Progress progress) throws Exception {
+        File temp=File.createTempFile("ranneki-benchmark-",".mp4",context.getCacheDir());
+        try {
+            String report=produce(context,audio,null,temp,scene,profile,
+                    Math.min(durationMs,8_000),cancelled,progress);
+            return "BENCHMARK 8s • real on-device codec pipeline\n"+report;
+        } finally { temp.delete(); }
+    }
+    private static String produce(Context context, Uri audio, Uri target, File cacheOutput,
+            ReactiveView scene,ExportProfile profile,int durationMs,
+            AtomicBoolean cancelled,Progress progress) throws Exception {
+        if(profile==null||audio==null||durationMs<=0||scene.getTrack()==null)
             throw new IllegalArgumentException("Scene / durasi / analisis audio belum siap");
         File video=File.createTempFile("ranneki-video-",".mp4",context.getCacheDir());
         File rendered=File.createTempFile("ranneki-final-",".mp4",context.getCacheDir());
@@ -34,10 +50,12 @@ public final class Mp4Exporter {
         thermal.sample();
         long startedNs=System.nanoTime();
         long finalFileBytes=0L;
+        long videoElapsedNs=0L;
         try {
             check(cancelled);
             progress.update(0,"Render frame");
             encodeVideo(video,scene,profile,durationMs,cancelled,progress,frameMetrics,thermal);
+            videoElapsedNs=System.nanoTime()-startedNs;
             check(cancelled);
             progress.update(91,"Menyiapkan audio");
             AudioExtractor audioProbe=new AudioExtractor(context,audio);
@@ -76,7 +94,8 @@ public final class Mp4Exporter {
                     Build.MANUFACTURER+" "+Build.MODEL+" / Android "+Build.VERSION.RELEASE+"\n"+
                     "Output "+profile.width+"x"+profile.height+" @ "+profile.fps+" FPS"+
                     " | internal "+profile.rasterWidth()+"x"+profile.rasterHeight()+"\n"+
-                    frameMetrics.summary(elapsedNs)+"\n"+
+                    frameMetrics.summary(videoElapsedNs)+"\n"+
+                    "Total (video + audio + mux): "+Math.round(elapsedNs/1e6)+" ms\n"+
                     "Thermal peak: "+ThermalInfo.label(thermal.peak())+" (OS severity; not °C)\n"+
                     "App Java heap in use: "+usedMb+" MB | final MP4: "+finalFileBytes/(1024*1024)+" MB";
         }finally {
@@ -128,9 +147,10 @@ public final class Mp4Exporter {
                 metrics.record(renderTime,System.nanoTime()-submitStart);
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
                 if(index%fps==0) {
-                    // Let Android protect the device before thermal throttling becomes critical.
-                    if(thermal.sample()>=4)
-                        throw new IllegalStateException("Android melaporkan suhu kritis; ekspor dihentikan demi keamanan perangkat");
+                    int severity=thermal.sample();
+                    if(ThermalInfo.shouldStop(severity))
+                        throw new IllegalStateException("Ekspor dihentikan: status termal "+ThermalInfo.label(severity)+
+                                ". Pilih preset lebih ringan dan dinginkan perangkat.");
                     progress.update((int)(90*index/Math.max(1,totalFrames)),"Render frame");
                 }
             }

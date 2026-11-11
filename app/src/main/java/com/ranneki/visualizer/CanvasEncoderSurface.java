@@ -16,7 +16,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private android.opengl.EGLContext context=EGL14.EGL_NO_CONTEXT;
     private android.opengl.EGLSurface window=EGL14.EGL_NO_SURFACE;
     private final Surface surface;
-    private int program,texture,position,texCoord,pulseUniform,chromaticUniform,vignetteUniform;
+    private int program,texture,position,texCoord,pulseUniform,chromaticUniform,vignetteUniform,textureUniform;
     private FloatBuffer points,uv;
     private int width,height;
     private boolean textureAllocated=false;
@@ -62,6 +62,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         pulseUniform=GLES20.glGetUniformLocation(program,"uPulse");
         chromaticUniform=GLES20.glGetUniformLocation(program,"uChromatic");
         vignetteUniform=GLES20.glGetUniformLocation(program,"uVignette");
+        textureUniform=GLES20.glGetUniformLocation(program,"uTexture");
         points=floats(new float[]{-1,-1,1,-1,-1,1,1,1});
         // GLUtils uploads Android Bitmap with its top row at the texture's bottom.
         uv=floats(new float[]{0,1,1,1,0,0,1,0});
@@ -98,7 +99,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glVertexAttribPointer(position,2,GLES20.GL_FLOAT,false,0,points);
         GLES20.glVertexAttribPointer(texCoord,2,GLES20.GL_FLOAT,false,0,uv);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program,"uTexture"),0);
+        GLES20.glUniform1i(textureUniform,0);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
         GLES20.glDisableVertexAttribArray(position);
         GLES20.glDisableVertexAttribArray(texCoord);
