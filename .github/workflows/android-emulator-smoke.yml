@@ -20,6 +20,15 @@ jobs:
           packages: 'platform-tools'
       - name: Install Android SDK
         run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Install emulator with retries for transient archive corruption
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if sdkmanager --install emulator --channel=0; then exit 0; fi
+            echo "SDK emulator download attempt $attempt failed"
+            sleep $((attempt * 5))
+          done
+          exit 1
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
