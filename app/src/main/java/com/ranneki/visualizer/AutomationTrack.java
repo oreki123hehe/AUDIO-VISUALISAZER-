@@ -34,6 +34,12 @@ final class AutomationTrack {
         double t = (ms - before.getKey()) / (double)(after.getKey() - before.getKey());
         return (int)Math.round(before.getValue() + (after.getValue() - before.getValue()) * t);
     }
+    long[] positions() {
+        long[] result=new long[points.size()];
+        int i=0;
+        for(Long ms:points.keySet()) result[i++]=ms;
+        return result;
+    }
     String encode() {
         StringBuilder output = new StringBuilder();
         for (Map.Entry<Long,Integer> e : points.entrySet()) {

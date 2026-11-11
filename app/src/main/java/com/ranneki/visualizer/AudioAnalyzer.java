@@ -42,6 +42,21 @@ public final class AudioAnalyzer {
         private Track(long[] timestamps, Features[] features, float[][] spectrum) {
             this.timestamps=timestamps; this.features=features; this.spectrum=spectrum;
         }
+        /** Timeline overview from normalized analysis frames (not decoded PCM).
+         * Peak pooling preserves short kick/transient spikes without extra decoding. */
+        public float[] waveformPeaks(int columns) {
+            int n=Math.max(1,Math.min(2048,columns));
+            float[] peaks=new float[n];
+            if(features.length==0) return peaks;
+            for(int i=0;i<features.length;i++) {
+                int bin=(int)Math.min(n-1,(long)i*n/features.length);
+                Features f=features[i];
+                float level=Math.max(f.bass,Math.max(f.mids,f.highs));
+                level=Math.max(level,Math.max(f.kick,f.snare)*0.85f);
+                if(level>peaks[bin]) peaks[bin]=Math.min(1f,level);
+            }
+            return peaks;
+        }
         /** 25–10,000 Hz effective range, limited by each file's sampling frequency. */
         public float bandAt(long ms, float minHz, float maxHz) {
             if (spectrum.length == 0) return 0f;

@@ -108,10 +108,12 @@ public final class Mp4Exporter {
     private static boolean drain(MediaCodec encoder,MediaMuxer muxer,MediaCodec.BufferInfo info,
             boolean eos,boolean started) throws Exception {
         int idle=0;
+        boolean sawEos=false;
         while(true) {
             int index=encoder.dequeueOutputBuffer(info,eos?10000:0);
             if(index==MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if(!eos || ++idle>400)break;
+                if(!eos)break;
+                if(++idle>500)throw new IllegalStateException("Video encoder tidak mengirim akhir stream (EOS)");
             } else if(index==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 if(started)throw new IllegalStateException("Video format changed twice");
                 int track=muxer.addTrack(encoder.getOutputFormat());muxer.start();started=true;
@@ -126,9 +128,10 @@ public final class Mp4Exporter {
                 }
                 boolean finished=(info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM)!=0;
                 encoder.releaseOutputBuffer(index,false);
-                if(finished)break;
+                if(finished){sawEos=true;break;}
             }
         }
+        if(eos&&!sawEos)throw new IllegalStateException("Video encoder selesai tanpa EOS");
         return started;
     }
     static final class AudioExtractor implements AutoCloseable {
@@ -180,11 +183,18 @@ public final class Mp4Exporter {
     private static void copyTrack(MediaExtractor extractor,MediaMuxer muxer,int out,long durationMs,
             AtomicBoolean cancelled,boolean normalizeAudio) throws Exception {
         int capacity=2*1024*1024;
-        MediaFormat f=extractor.getTrackFormat(extractor.getSampleTrackIndex());
-        if(f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))capacity=Math.max(capacity,f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
+        int sourceTrack=extractor.getSampleTrackIndex();
+        if(sourceTrack<0)throw new IllegalStateException("Track media tidak memiliki sample");
+        MediaFormat f=extractor.getTrackFormat(sourceTrack);
+        if(f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)){
+            int requested=f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE);
+            if(requested>8*1024*1024)throw new IllegalArgumentException("Media sample terlalu besar");
+            capacity=Math.max(capacity,requested);
+        }
         ByteBuffer data=ByteBuffer.allocateDirect(capacity);
         MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
         long base=-1,previous=-1;
+        int copied=0;
         while(true) {
             check(cancelled);data.clear();
             int length=extractor.readSampleData(data,0);
@@ -197,8 +207,10 @@ public final class Mp4Exporter {
             info.set(0,length,pts,extractor.getSampleFlags());
             data.position(0);data.limit(length);
             muxer.writeSampleData(out,data,info);
+            copied++;
             previous=pts;
             extractor.advance();
         }
+        if(copied==0)throw new IllegalStateException("Track media kosong atau lebih pendek dari durasi ekspor");
     }
 }

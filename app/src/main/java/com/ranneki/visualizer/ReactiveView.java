@@ -173,6 +173,8 @@ public final class ReactiveView extends View {
     public int getDirection(int i) {return direction[i];}
     public void setDirection(int i,int value) {direction[i]=limit(value,0,100);invalidate();}
     public int keyframeCount(int i) {return automation[i].count();}
+    public long[] getStrengthKeyframePositions(int i) {return automation[i].positions();}
+
     public void addStrengthKeyframe(int i,long positionMs) {
         automation[i].put(positionMs,strength[i]);invalidate();
     }
@@ -204,8 +206,12 @@ public final class ReactiveView extends View {
     public void setLayerRotation(int id,int v){layerRotation[id]=limit(v,0,100);invalidate();}
     public long getLayerStart(int id){return startTimeMs[id];}
     public long getLayerEnd(int id){return endTimeMs[id];}
-    public void setLayerStart(int id,long ms){startTimeMs[id]=Math.max(0,ms);invalidate();}
-    public void setLayerEnd(int id,long ms){endTimeMs[id]=Math.max(0,ms);invalidate();}
+    public void setLayerStart(int id,long ms){
+        startTimeMs[id]=Math.max(0,ms);
+        if(endTimeMs[id]!=Long.MAX_VALUE&&endTimeMs[id]<startTimeMs[id])endTimeMs[id]=startTimeMs[id];
+        invalidate();
+    }
+    public void setLayerEnd(int id,long ms){endTimeMs[id]=Math.max(startTimeMs[id],ms);invalidate();}
     public void clearLayerRange(int id){startTimeMs[id]=0;endTimeMs[id]=Long.MAX_VALUE;invalidate();}
 
     public int getLayerCount() {return layerOrder.size();}

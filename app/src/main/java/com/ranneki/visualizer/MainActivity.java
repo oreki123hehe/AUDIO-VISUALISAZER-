@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private MediaPlayer player;
     private Button playButton, ratioButton;
     private TextView status, timeline;
+    private TimelineView timelineView;
     private SeekBar positionBar;
     private int durationMs=0;
     private volatile boolean analyzed=false;
@@ -72,6 +73,7 @@ public class MainActivity extends Activity {
                     int current=player.getCurrentPosition();
                     timeline.setText(format(current)+" / "+format(durationMs));
                     if(durationMs>0) positionBar.setProgress(Math.round(current*1000f/durationMs));
+                    if(timelineView!=null) timelineView.setPosition(current);
                 } catch (IllegalStateException ignored) { }
             }
             ui.postDelayed(this,130);
@@ -103,7 +105,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.4",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.6",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -154,6 +156,26 @@ public class MainActivity extends Activity {
         });
         playback.addView(positionBar,new LinearLayout.LayoutParams(0,dp(35),1));
         root.addView(playback,new LinearLayout.LayoutParams(-1,dp(37)));
+        timelineView=new TimelineView(this);
+        timelineView.setScene(reactive);
+        timelineView.setDuration(durationMs);
+        timelineView.setSeekListener(ms->{
+            if(player!=null){
+                try{player.seekTo((int)Math.min(Integer.MAX_VALUE,ms));reactive.invalidate();}
+                catch(Exception ignored) { }
+            }
+        });
+        LinearLayout timelineHeader=row();
+        timelineView.setVisibility(View.GONE);
+        Button timelineToggle=addButton(timelineHeader,"▤ Timeline ▸",v->{});
+        timelineToggle.setOnClickListener(v->{
+            boolean show=timelineView.getVisibility()!=View.VISIBLE;
+            timelineView.setVisibility(show?View.VISIBLE:View.GONE);
+            timelineToggle.setText(show?"▤ Timeline ▾":"▤ Timeline ▸");
+        });
+        timelineHeader.addView(text("Waveform • FX lanes • keyframe",11,0xff8f9ec5,false));
+        root.addView(timelineHeader,new LinearLayout.LayoutParams(-1,dp(37)));
+        root.addView(timelineView,new LinearLayout.LayoutParams(-1,dp(179)));
 
         status=text("Impor lagu untuk memulai analisis frekuensi dan kick.",11,0xffb6c0db,false);
         status.setPadding(dp(4),dp(2),0,dp(2));
@@ -186,7 +208,7 @@ public class MainActivity extends Activity {
         addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
         for(int id:reactive.getLayerOrder()) addEffectPanel(controls,id);
         reorderPanels();
-        TextView help=text("V1.4: tambah, duplikasi, hapus, urut layer bebas (maks. 48). Audio reactive per parameter, blend/mask dan keyframe strength. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
+        TextView help=text("V1.6: waveform timeline, tambah, duplikasi, hapus, urut layer bebas (maks. 48). Audio reactive per parameter, blend/mask dan keyframe strength. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -211,13 +233,15 @@ public class MainActivity extends Activity {
                 .setView(input).setNegativeButton("Batal",(d,w)->{})
                 .setPositiveButton("Simpan",(d,w)->{
                     reactive.setLayerName(effect,input.getText().toString());
+                    timelineView.refresh();
                     name.setText("#"+(effect+1)+"  "+reactive.getLayerName(effect));
                 }).show();
         });
         header.addView(name,new LinearLayout.LayoutParams(0,dp(38),1));
+        addButton(header,"◎",v->{timelineView.setFocusLayer(effect);timelineView.refresh();});
         toggleButtons[effect]=addButton(header,reactive.isEnabled(effect)?"ON":"OFF",v->{
             reactive.setEnabled(effect,!reactive.isEnabled(effect));
-            toggleButtons[effect].setText(reactive.isEnabled(effect)?"ON":"OFF");
+            toggleButtons[effect].setText(reactive.isEnabled(effect)?"ON":"OFF");timelineView.refresh();
         });
         card.addView(header);
         LinearLayout sourceLine=row();
@@ -230,7 +254,7 @@ public class MainActivity extends Activity {
         addButton(sourceLine,"⧉",v->{
             int added=reactive.duplicateLayer(effect);
             if(added<0) {toast("Maksimum 48 layer aktif");return;}
-            addEffectPanel(effectContainer,added);reorderPanels();
+            addEffectPanel(effectContainer,added);reorderPanels();timelineView.refresh();
         });
         addButton(sourceLine,"✕",v->new AlertDialog.Builder(this)
                 .setTitle("Hapus layer?")
@@ -239,6 +263,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("Hapus",(d,w)->{
                     reactive.removeLayer(effect);
                     if(card.getParent()==effectContainer) effectContainer.removeView(card);
+                    timelineView.refresh();
                     panels[effect]=null;toggleButtons[effect]=null;mappingButtons[effect]=null;
                     reorderPanels();
                 }).show());
@@ -271,9 +296,9 @@ public class MainActivity extends Activity {
         TextView rangeLabel=text("TIMELINE: "+getRangeTitle(effect),11,PURPLE,true);
         advanced.addView(rangeLabel);
         LinearLayout rangeRow=row();
-        addButton(rangeRow,"Mulai di sini",v->{reactive.setLayerStart(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
-        addButton(rangeRow,"Akhir di sini",v->{reactive.setLayerEnd(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
-        addButton(rangeRow,"Reset",v->{reactive.clearLayerRange(effect);rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));});
+        addButton(rangeRow,"Mulai di sini",v->{reactive.setLayerStart(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));timelineView.refresh();});
+        addButton(rangeRow,"Akhir di sini",v->{reactive.setLayerEnd(effect,currentPosition());rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));timelineView.refresh();});
+        addButton(rangeRow,"Reset",v->{reactive.clearLayerRange(effect);rangeLabel.setText("TIMELINE: "+getRangeTitle(effect));timelineView.refresh();});
         advanced.addView(rangeRow);
         addSlider(advanced,"Opacity",reactive.getOpacity(effect),value->reactive.setOpacity(effect,value));
         addSlider(advanced,"Kecepatan",reactive.getVelocity(effect),value->reactive.setVelocity(effect,value));
@@ -316,15 +341,15 @@ public class MainActivity extends Activity {
         LinearLayout keyframes=row();
         addButton(keyframes,"+ Titik",v->{
             reactive.addStrengthKeyframe(effect,currentPosition());
-            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));
+            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));timelineView.refresh();
         });
         addButton(keyframes,"− Titik",v->{
             reactive.removeStrengthKeyframe(effect,currentPosition());
-            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));
+            automationLabel.setText("KEYFRAME KEKUATAN: "+reactive.keyframeCount(effect));timelineView.refresh();
         });
         addButton(keyframes,"Hapus Semua",v->{
             reactive.clearStrengthKeyframes(effect);
-            automationLabel.setText("KEYFRAME KEKUATAN: 0");
+            automationLabel.setText("KEYFRAME KEKUATAN: 0");timelineView.refresh();
         });
         advanced.addView(keyframes);
     }
@@ -344,7 +369,7 @@ public class MainActivity extends Activity {
         catch(Exception ignored) {return 0L;}
     }
     private void moveCard(int effect,int delta) {
-        if(reactive.moveLayer(effect,delta)) reorderPanels();
+        if(reactive.moveLayer(effect,delta)){reorderPanels();timelineView.refresh();}
     }
     private void requestLayerImage(int layer) {
         pendingImageLayer=layer;
@@ -373,7 +398,7 @@ public class MainActivity extends Activity {
                     int id=reactive.addLayer(type);
                     if(id<0){toast("Batas 48 layer; hapus sebagian layer dulu");return;}
                     reactive.setEnabled(id,true);
-                    addEffectPanel(effectContainer,id);reorderPanels();
+                    addEffectPanel(effectContainer,id);reorderPanels();timelineView.setFocusLayer(id);timelineView.refresh();
                     if(type==ReactiveView.IMAGE)requestLayerImage(id);
                 }).show();
     }
@@ -482,6 +507,7 @@ public class MainActivity extends Activity {
         analyzed=false;
         if(player!=null) { player.release();player=null; }
         reactive.setTrack(null);
+        timelineView.setTrack(null);
         playButton.setText("▶ Play");
         durationMs=0;
         try {
@@ -492,6 +518,7 @@ public class MainActivity extends Activity {
             next.setOnSeekCompleteListener(mp->reactive.invalidate());
             player=next;
             durationMs=player.getDuration();
+            timelineView.setDuration(durationMs);
         } catch(Exception e) {
             status.setText("Audio gagal dibuka: "+e.getMessage());
             if(player!=null) {player.release();player=null;}
@@ -504,6 +531,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->{
                     if(version!=generation.get() || isFinishing() || isDestroyed()) return;
                     reactive.setTrack(result);
+                    timelineView.setTrack(result);
                     analyzed=true;
                     status.setText("Siap! Efek mengikuti musik. Pilih sumber di tiap layer.");
                     Toast.makeText(this,"Analisis audio selesai",Toast.LENGTH_SHORT).show();
