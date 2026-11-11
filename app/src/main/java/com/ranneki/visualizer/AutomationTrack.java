@@ -21,6 +21,17 @@ final class AutomationTrack {
         if (!points.containsKey(position) && points.size() >= MAX_POINTS) return;
         points.put(position, Math.max(minValue, Math.min(maxValue, percent)));
     }
+    /** Atomically move an existing keyframe without deleting a nearby neighbour.
+     * An occupied destination is rejected so dragging never destroys another point. */
+    boolean move(long fromMs,long toMs) {
+        if(!points.containsKey(fromMs))return false;
+        long destination=Math.max(0L,toMs);
+        if(destination==fromMs)return true;
+        if(points.containsKey(destination))return false;
+        int value=points.remove(fromMs);
+        points.put(destination,value);
+        return true;
+    }
     void removeNear(long ms, long toleranceMs) {
         Long best = null;
         long distance = Math.max(0, toleranceMs) + 1;

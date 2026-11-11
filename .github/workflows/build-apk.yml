@@ -28,9 +28,9 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest; do
             java -ea -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Assemble debug APK

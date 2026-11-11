@@ -106,3 +106,12 @@ The analyzer estimates an approximate song tempo (70–190 BPM) from detected tr
 - On-device preview reports now include **observed Canvas draw FPS and p95 frame-gap** for actual rendered frames. This is more meaningful than counting Choreographer callbacks, but is not a GPU profiler or measurement from a phone until the app is installed and tested.
 
 - The obsolete AndroidX `androidTest` test source has been retired. The debug-only emulator smoke activity is the maintained end-to-end test and requires no AndroidX/JUnit runtime dependency.
+
+## RC editor update: 48-lane scrolling + keyframe editing
+
+- Timeline now lets users inspect all 48 layer instances by vertically swiping the left lane-name column, or using `↑` / `↓` lane controls. Six lanes fit at once without a huge view.
+- Select a parameter in the layer's **Advanced → Parameter** control, then drag its highlighted keyframe directly on the timeline. The move is atomic: a collision with another point is rejected instead of deleting a neighboring keyframe.
+- `SNAP ON` optionally aligns timeline scrubbing, trim boundaries, moved clip starts and keyframes to *estimated* beat markers when within 140 ms. For exact sample alignment leave snapping off.
+- Layer edits autosave the project JSON once when the gesture finishes, rather than writing persistent preferences every render frame.
+- Fix waveform indexing at the far-right zoom boundary and prevent off-screen keyframes from appearing as fake markers at view edges.
+- Added pure-Java timeline-edit regression tests. **These checks are not physical-device verification.**

@@ -172,6 +172,12 @@ public class MainActivity extends Activity {
         timelineView=new TimelineView(this);
         timelineView.setScene(reactive);
         timelineView.setDuration(durationMs);
+        timelineView.setParameterProvider(id->selectedKeyframeParam[id]);
+        timelineView.setOnEditListener(()->{
+            // Only write once when the gesture finishes, never for each drag frame.
+            try{prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();}
+            catch(Exception e){status.setText("Autosave timeline gagal: "+e.getMessage());}
+        });
         timelineView.setSeekListener(ms->{
             if(player!=null){
                 try{player.seekTo((int)Math.min(Integer.MAX_VALUE,ms));reactive.invalidate();}
@@ -190,8 +196,18 @@ public class MainActivity extends Activity {
         addButton(timelineHeader,"＋",v->timelineView.setZoom(timelineView.getZoom()*2));
         addButton(timelineHeader,"◀",v->timelineView.scrollWindow(-1));
         addButton(timelineHeader,"▶",v->timelineView.scrollWindow(1));
-        root.addView(timelineHeader,new LinearLayout.LayoutParams(-1,dp(37)));
-        root.addView(timelineView,new LinearLayout.LayoutParams(-1,dp(179)));
+        addButton(timelineHeader,"↑",v->timelineView.scrollLanes(-1));
+        addButton(timelineHeader,"↓",v->timelineView.scrollLanes(1));
+        Button beatSnap=addButton(timelineHeader,"SNAP OFF",v->{});
+        beatSnap.setOnClickListener(v->{
+            timelineView.setSnapEnabled(!timelineView.isSnapEnabled());
+            beatSnap.setText(timelineView.isSnapEnabled()?"SNAP ON":"SNAP OFF");
+        });
+        android.widget.HorizontalScrollView timelineScroll=new android.widget.HorizontalScrollView(this);
+        timelineScroll.setHorizontalScrollBarEnabled(false);
+        timelineScroll.addView(timelineHeader);
+        root.addView(timelineScroll,new LinearLayout.LayoutParams(-1,dp(37)));
+        root.addView(timelineView,new LinearLayout.LayoutParams(-1,dp(240)));
 
         status=text("Impor lagu untuk memulai analisis frekuensi dan kick.",11,0xffb6c0db,false);
         status.setPadding(dp(4),dp(2),0,dp(2));
@@ -364,6 +380,8 @@ public class MainActivity extends Activity {
             selectedKeyframeParam[effect]=(selectedKeyframeParam[effect]+1)%ReactiveView.KEYFRAME_NAMES.length;
             selectParam.setText("↔ Parameter: "+ReactiveView.KEYFRAME_NAMES[selectedKeyframeParam[effect]]);
             automationLabel.setText(automationSummary(effect));
+            timelineView.setFocusLayer(effect);
+            timelineView.refresh();
         });
         LinearLayout keyframes=row();
         addButton(keyframes,"＋ Edit Titik",v->editKeyframe(effect,automationLabel));

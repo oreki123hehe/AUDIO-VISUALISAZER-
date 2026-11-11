@@ -20,6 +20,10 @@ public final class AutomationTrackTest {
         assertNear(b.valueAt(1500,99),60);
         b.removeNear(1001,100);
         if(b.count()!=2) throw new AssertionError("removal failed");
+        if(!b.move(0,120L))throw new AssertionError("exact keyframe move failed");
+        if(b.count()!=2 || b.positions()[0]!=120)throw new AssertionError("move must preserve count");
+        if(b.move(120,2000))throw new AssertionError("moving into another keyframe must be rejected");
+        if(b.count()!=2 || b.positions()[0]!=120)throw new AssertionError("collision damaged existing points");
         b.decode("bad;20:999;5:50;20:80");
         if(b.count()!=2) throw new AssertionError("invalid decoding");
         b.clear();

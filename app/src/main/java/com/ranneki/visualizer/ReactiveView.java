@@ -223,6 +223,13 @@ public final class ReactiveView extends View {
         if(!isAllocated(id))return;
         automation[id][param].put(positionMs,AutomationParameters.clamp(param,value));invalidate();
     }
+    public boolean moveKeyframe(int id,int param,long fromMs,long toMs) {
+        AutomationParameters.check(param);
+        if(!isAllocated(id))return false;
+        boolean moved=automation[id][param].move(fromMs,toMs);
+        if(moved)invalidate();
+        return moved;
+    }
     public void removeKeyframe(int id,int param,long positionMs) {
         AutomationParameters.check(param);
         if(isAllocated(id)) {automation[id][param].removeNear(positionMs,180);invalidate();}
