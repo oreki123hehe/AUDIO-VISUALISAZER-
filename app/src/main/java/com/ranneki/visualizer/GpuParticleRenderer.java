@@ -13,6 +13,7 @@ final class GpuParticleRenderer implements AutoCloseable {
     private static final int MAX_PARTICLES=512;
     private static final int[] BASE_COUNT={260,230,340,36,180,210,220,108,64,100};
     private static final String VERTEX =
+        "precision mediump float;\n"+
         "attribute vec4 aSeed;\n"+
         "uniform vec2 uResolution; uniform vec4 uViewRect;\n"+
         "uniform float uDesignH,uTime,uType,uPower,uVelocity,uSize,uPointMax;\n"+
