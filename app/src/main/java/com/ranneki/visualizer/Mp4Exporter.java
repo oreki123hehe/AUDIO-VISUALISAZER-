@@ -74,13 +74,13 @@ public final class Mp4Exporter {
             // Export document is written only when the MP4 is complete.
             boolean transferred=false;
             try(InputStream in=new FileInputStream(rendered);
-                    OutputStream out=context.getContentResolver().openOutputStream(target,"w")) {
+                    OutputStream out=cacheOutput!=null ? new java.io.FileOutputStream(cacheOutput) : context.getContentResolver().openOutputStream(target,"w")) {
                 if(out==null)throw new IllegalStateException("File tujuan tidak bisa ditulis");
                 byte[] buffer=new byte[256*1024];int n;
                 while((n=in.read(buffer))!=-1){check(cancelled);out.write(buffer,0,n);}
                 out.flush();transferred=true;
             } finally {
-                if(!transferred) {
+                if(!transferred && target!=null) {
                     // The SAF document was freshly created; do not leave a broken MP4 behind.
                     try { context.getContentResolver().delete(target,null,null); }
                     catch(Exception ignored) { }
