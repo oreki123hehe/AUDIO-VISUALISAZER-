@@ -1,6 +1,7 @@
 package com.ranneki.visualizer;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -33,19 +34,25 @@ import java.io.OutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Native Android audio-reactive editor. The finished application works offline. */
 public class MainActivity extends Activity {
-    private static final int PICK_AUDIO=101, PICK_IMAGE=102;
+    private static final int PICK_AUDIO=101, PICK_IMAGE=102, PICK_EXPORT=103;
     private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
     private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
+    private final ExecutorService exportWorker=Executors.newSingleThreadExecutor();
+    private final AtomicBoolean exportCancel=new AtomicBoolean(false);
+    private volatile boolean exporting=false;
+    private Uri musicUri;
+    private int exportWidth=720,exportHeight=1280;
     private final AtomicInteger generation=new AtomicInteger();
     private Future<?> analysisTask;
     private final Handler ui=new Handler(Looper.getMainLooper());
-    private final Button[] toggleButtons=new Button[ReactiveView.EFFECT_COUNT],
-            mappingButtons=new Button[ReactiveView.EFFECT_COUNT];
-    private final LinearLayout[] panels=new LinearLayout[ReactiveView.EFFECT_COUNT];
+    private final Button[] toggleButtons=new Button[ReactiveView.MAX_LAYERS],
+            mappingButtons=new Button[ReactiveView.MAX_LAYERS];
+    private final LinearLayout[] panels=new LinearLayout[ReactiveView.MAX_LAYERS];
     private LinearLayout effectContainer;
     private ReactiveView reactive;
     private MediaPlayer player;
@@ -93,7 +100,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.3",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.4",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -109,6 +116,7 @@ public class MainActivity extends Activity {
             ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
         });
         addButton(commandsRow,"▤ Simpan PNG",v->saveImage());
+        addButton(commandsRow,"● Export MP4",v->chooseExport());
         addButton(commandsRow,"✓ Preset",v->savePreset());
         root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
 
@@ -172,9 +180,10 @@ public class MainActivity extends Activity {
         controls.addView(spectrumControls);
         addSlider(controls,"Ukuran Spectrum",reactive.getSpectrumScale(),value->reactive.setSpectrumScale(value));
         addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
-        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) addEffectPanel(controls,i);
+        addButton(controls,"＋ Tambah Layer FX",v->chooseLayer());
+        for(int id:reactive.getLayerOrder()) addEffectPanel(controls,id);
         reorderPanels();
-        TextView help=text("V1.3: tiap efek dapat memetakan ukuran, jumlah, kecepatan, dan opacity ke sumber audio berbeda. Mask & blend serta keyframe kekuatan tersedia; timeline masih berupa scrubber sederhana. Kick/snare adalah estimasi onset, bukan stem AI. Ekspor MP4 belum tersedia.",11,0xff9ba7c5,false);
+        TextView help=text("V1.4: tambah, duplikasi, hapus, urut layer bebas (maks. 48). Audio reactive per parameter, blend/mask dan keyframe strength. Ekspor MP4 H.264 + AAC offline. Kick/snare masih estimasi onset.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -191,7 +200,7 @@ public class MainActivity extends Activity {
         controls.addView(card,cp);
         LinearLayout header=row();
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name=text(ReactiveView.EFFECT_NAMES[effect],14,Color.WHITE,true);
+        TextView name=text("#"+(effect+1)+"  "+ReactiveView.EFFECT_NAMES[reactive.getLayerType(effect)],14,Color.WHITE,true);
         header.addView(name,new LinearLayout.LayoutParams(0,dp(38),1));
         toggleButtons[effect]=addButton(header,reactive.isEnabled(effect)?"ON":"OFF",v->{
             reactive.setEnabled(effect,!reactive.isEnabled(effect));
@@ -205,6 +214,21 @@ public class MainActivity extends Activity {
         });
         addButton(sourceLine,"↑",v->moveCard(effect,-1));
         addButton(sourceLine,"↓",v->moveCard(effect,1));
+        addButton(sourceLine,"⧉",v->{
+            int added=reactive.duplicateLayer(effect);
+            if(added<0) {toast("Maksimum 48 layer aktif");return;}
+            addEffectPanel(effectContainer,added);reorderPanels();
+        });
+        addButton(sourceLine,"✕",v->new AlertDialog.Builder(this)
+                .setTitle("Hapus layer?")
+                .setMessage("Hapus "+ReactiveView.EFFECT_NAMES[reactive.getLayerType(effect)]+" dari scene?")
+                .setNegativeButton("Batal",(d,w)->{})
+                .setPositiveButton("Hapus",(d,w)->{
+                    reactive.removeLayer(effect);
+                    if(card.getParent()==effectContainer) effectContainer.removeView(card);
+                    panels[effect]=null;toggleButtons[effect]=null;mappingButtons[effect]=null;
+                    reorderPanels();
+                }).show());
         card.addView(sourceLine);
         addSlider(card,"Ukuran",reactive.getSize(effect),value->reactive.setSize(effect,value));
         addSlider(card,"Jumlah",reactive.getDensity(effect),value->reactive.setDensity(effect,value));
@@ -285,12 +309,22 @@ public class MainActivity extends Activity {
     private void moveCard(int effect,int delta) {
         if(reactive.moveLayer(effect,delta)) reorderPanels();
     }
+    private void chooseLayer() {
+        new AlertDialog.Builder(this).setTitle("Tambah layer efek")
+                .setItems(ReactiveView.EFFECT_NAMES,(dialog,type)->{
+                    int id=reactive.addLayer(type);
+                    if(id<0){toast("Batas 48 layer; hapus sebagian layer dulu");return;}
+                    reactive.setEnabled(id,true);
+                    addEffectPanel(effectContainer,id);reorderPanels();
+                }).show();
+    }
+    private void toast(String message) {Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
     private void reorderPanels() {
         if(effectContainer==null) return;
         for(LinearLayout card:panels) if(card!=null && card.getParent()==effectContainer)
             effectContainer.removeView(card);
         // Section heading, spectrum toggle, and two global sliders stay above FX cards.
-        int index=4;
+        int index=5;
         for(int effect:reactive.getLayerOrder()) {
             LinearLayout card=panels[effect];
             if(card!=null) {
@@ -371,8 +405,10 @@ public class MainActivity extends Activity {
         } catch(Exception ignored) { }
         if(request==PICK_AUDIO) loadAudio(uri);
         else if(request==PICK_IMAGE) loadImage(uri);
+        else if(request==PICK_EXPORT) exportMp4(uri);
     }
     private void loadAudio(Uri uri) {
+        musicUri=uri;
         final int version=generation.incrementAndGet();
         if(analysisTask!=null) analysisTask.cancel(true);
         analyzed=false;
@@ -444,84 +480,73 @@ public class MainActivity extends Activity {
         } catch(Exception e) {status.setText("Playback gagal: "+e.getMessage());}
     }
     private void savePreset() {
-        SharedPreferences.Editor ed=prefs.edit();
-        ed.putBoolean("portrait",reactive.isPortrait());
-        ed.putBoolean("economyMode",reactive.isEconomyMode());
-        ed.putBoolean("spectrumEnabled",reactive.isSpectrumEnabled());
-        ed.putInt("spectrumScale",reactive.getSpectrumScale());
-        ed.putInt("cameraShake",reactive.getCameraShake());
-        StringBuilder orderText=new StringBuilder();
-        for(int index:reactive.getLayerOrder()) {
-            if(orderText.length()>0) orderText.append(',');
-            orderText.append(index);
-        }
-        ed.putString("layerOrder",orderText.toString());
-        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
-            ed.putBoolean("on"+i,reactive.isEnabled(i));
-            ed.putInt("source"+i,reactive.getSource(i));
-            ed.putInt("size"+i,reactive.getSize(i));
-            ed.putInt("density"+i,reactive.getDensity(i));
-            ed.putInt("strength"+i,reactive.getStrength(i));
-            ed.putInt("opacity"+i,reactive.getOpacity(i));
-            ed.putInt("velocity"+i,reactive.getVelocity(i));
-            ed.putInt("threshold"+i,reactive.getThreshold(i));
-            ed.putInt("attack"+i,reactive.getAttack(i));
-            ed.putInt("release"+i,reactive.getRelease(i));
-            ed.putInt("minHz"+i,reactive.getMinHz(i));
-            ed.putInt("maxHz"+i,reactive.getMaxHz(i));
-            ed.putInt("blend"+i,reactive.getBlend(i));
-            ed.putInt("mask"+i,reactive.getMask(i));
-            ed.putInt("maskRadius"+i,reactive.getMaskRadius(i));
-            ed.putInt("direction"+i,reactive.getDirection(i));
-            ed.putString("automation"+i,reactive.encodeStrengthKeyframes(i));
-            for(int param=0;param<ReactiveView.PROPERTY_NAMES.length;param++)
-                ed.putInt("paramSource"+i+"_"+param,reactive.getPropertySource(i,param));
-        }
-        ed.apply();
-        Toast.makeText(this,"Preset tersimpan di HP",Toast.LENGTH_SHORT).show();
+        try {
+            prefs.edit().putString("projectV2",reactive.exportProjectJson()).apply();
+            toast("Preset layer tersimpan offline");
+        }catch(Exception e){status.setText("Preset gagal: "+e.getMessage());}
     }
     private void preloadPresetSettings() {
-        reactive.setPortrait(prefs.getBoolean("portrait",true));
-        reactive.setEconomyMode(prefs.getBoolean("economyMode",true));
-        reactive.setSpectrumEnabled(prefs.getBoolean("spectrumEnabled",true));
-        reactive.setSpectrumScale(prefs.getInt("spectrumScale",55));
-        reactive.setCameraShake(prefs.getInt("cameraShake",0));
-        int[] initialSources={2,1,4,0,1,3,0,4,2,0};
-        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
-            reactive.setEnabled(i,prefs.getBoolean("on"+i,i<4));
-            reactive.setSource(i,prefs.getInt("source"+i,initialSources[i]));
-            reactive.setSize(i,prefs.getInt("size"+i,55));
-            reactive.setDensity(i,prefs.getInt("density"+i,60));
-            reactive.setStrength(i,prefs.getInt("strength"+i,80));
-            reactive.setOpacity(i,prefs.getInt("opacity"+i,75));
-            reactive.setVelocity(i,prefs.getInt("velocity"+i,50));
-            reactive.setThreshold(i,prefs.getInt("threshold"+i,15));
-            reactive.setAttack(i,prefs.getInt("attack"+i,18));
-            reactive.setRelease(i,prefs.getInt("release"+i,165));
-            reactive.setFrequency(i,prefs.getInt("minHz"+i,35),prefs.getInt("maxHz"+i,150));
-            reactive.setBlend(i,prefs.getInt("blend"+i,0));
-            reactive.setMask(i,prefs.getInt("mask"+i,0));
-            reactive.setMaskRadius(i,prefs.getInt("maskRadius"+i,65));
-            reactive.setDirection(i,prefs.getInt("direction"+i,0));
-            reactive.decodeStrengthKeyframes(i,prefs.getString("automation"+i,""));
-            for(int param=0;param<ReactiveView.PROPERTY_NAMES.length;param++)
-                reactive.setPropertySource(i,param,prefs.getInt("paramSource"+i+"_"+param,-1));
-        }
-        String[] encoded=prefs.getString("layerOrder","").split(",");
-        if(encoded.length==ReactiveView.EFFECT_COUNT) {
-            try {
-                int[] indices=new int[encoded.length];
-                for(int i=0;i<indices.length;i++) indices[i]=Integer.parseInt(encoded[i]);
-                reactive.setLayerOrder(indices);
-            } catch(NumberFormatException ignored) { }
-        }
+        String saved=prefs.getString("projectV2",null);
+        if(saved!=null && !reactive.importProjectJson(saved))
+            status.setText("Preset lama rusak, memakai scene default");
     }
     private void restorePreset() {
         ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
-        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
-            toggleButtons[i].setText(reactive.isEnabled(i)?"ON":"OFF");
-            mappingButtons[i].setText("→ "+ReactiveView.SOURCES[reactive.getSource(i)]);
+        for(int id:reactive.getLayerOrder()) {
+            if(toggleButtons[id]!=null)toggleButtons[id].setText(reactive.isEnabled(id)?"ON":"OFF");
+            if(mappingButtons[id]!=null)mappingButtons[id].setText("→ "+ReactiveView.SOURCES[reactive.getSource(id)]);
         }
+    }
+    private void chooseExport() {
+        if(musicUri==null || !analyzed) {toast("Impor lagu dan tunggu analisis dulu");return;}
+        if(exporting) {toast("Ekspor sedang berjalan");return;}
+        String[] sizes={"540p • Hemat baterai", "720p • Seimbang", "1080p • Berat"};
+        new AlertDialog.Builder(this).setTitle("Ekspor MP4 • 30 FPS")
+                .setSingleChoiceItems(sizes,1,(dialog,which)->{
+                    int shortSide=which==0?540:which==1?720:1080;
+                    exportWidth=reactive.isPortrait()?shortSide:shortSide*16/9;
+                    exportHeight=reactive.isPortrait()?shortSide*16/9:shortSide;
+                    dialog.dismiss();
+                    Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("video/mp4");
+                    intent.putExtra(Intent.EXTRA_TITLE,"Ranneki_"+System.currentTimeMillis()+".mp4");
+                    startActivityForResult(intent,PICK_EXPORT);
+                }).setNegativeButton("Batal",(d,w)->{}).show();
+    }
+    private void exportMp4(Uri outputUri) {
+        if(musicUri==null || !analyzed || exporting)return;
+        if(player!=null && player.isPlaying()) {player.pause();playButton.setText("▶ Play");}
+        exporting=true;exportCancel.set(false);
+        // Snapshot the project on the UI thread. Export never mutates the live preview.
+        ReactiveView renderCopy=new ReactiveView(this);
+        if(!renderCopy.importProjectJson(reactive.exportProjectJson())){
+            exporting=false;status.setText("Gagal membuat salinan scene");return;
+        }
+        renderCopy.setTrack(reactive.getTrack());
+        Bitmap bg=reactive.getBackdrop();
+        if(bg!=null && !bg.isRecycled())renderCopy.setBackdrop(bg.copy(Bitmap.Config.ARGB_8888,false));
+        renderCopy.setEconomyMode(false);
+        final Uri input=musicUri;
+        final int width=exportWidth,height=exportHeight;
+        final int length=durationMs;
+        status.setText("Ekspor MP4 dimulai — tekan status untuk membatalkan");
+        status.setOnClickListener(v->{if(exporting){exportCancel.set(true);status.setText("Membatalkan ekspor...");}});
+        exportWorker.execute(()->{
+            try {
+                Mp4Exporter.export(getApplicationContext(),input,outputUri,renderCopy,
+                        width,height,length,exportCancel,(progress,stage)->{
+                            runOnUiThread(()->status.setText(stage+" "+progress+"% • ketuk untuk batal"));
+                        });
+                runOnUiThread(()->{status.setText("MP4 tersimpan: video H.264 + audio AAC");toast("Video berhasil diekspor");});
+            }catch(Exception e){
+                runOnUiThread(()->status.setText("Ekspor gagal: "+e.getMessage()));
+            }finally {
+                Bitmap b=renderCopy.getBackdrop();if(b!=null && !b.isRecycled())b.recycle();
+                exporting=false;
+                runOnUiThread(()->status.setOnClickListener(null));
+            }
+        });
     }
     private void saveImage() {
         try {
@@ -608,6 +633,7 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(timeUpdater);
         if(analysisTask!=null) analysisTask.cancel(true);
         analysisWorker.shutdownNow();
+        exportCancel.set(true);exportWorker.shutdownNow();
         if(player!=null) {player.release();player=null;}
         super.onDestroy();
     }

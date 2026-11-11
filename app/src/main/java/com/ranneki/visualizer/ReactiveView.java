@@ -15,6 +15,9 @@ import android.graphics.PorterDuffXfermode;
 import android.os.SystemClock;
 import android.view.View;
 import java.util.Random;
+import java.util.ArrayList;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /** On-device, audio-driven Canvas compositor with user-reorderable effect layers. */
 public final class ReactiveView extends View {
@@ -33,28 +36,36 @@ public final class ReactiveView extends View {
     public static final String[] MASK_NAMES={"Tanpa mask", "Lingkaran", "Atas", "Bawah"};
     private static final int DESIGN_WIDTH=400;
     private static final int PROPERTY_COUNT=4;
+    public static final int MAX_LAYERS=48;
+    private final ArrayList<Integer> layerOrder=new ArrayList<>();
+    private final boolean[] allocated=new boolean[MAX_LAYERS];
+    private final int[] layerType=new int[MAX_LAYERS];
+    private final Particle[][] layerParticles=new Particle[MAX_LAYERS][];
+    private final Ripple[][] layerRipples=new Ripple[MAX_LAYERS][];
+    private final int[] layerRippleCursor=new int[MAX_LAYERS];
+    private final float[] prevWaterLevel=new float[MAX_LAYERS],prevSparkLevel=new float[MAX_LAYERS];
+    private int activeLayer=0;
     private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint blendPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path reusableFlame=new Path();
     private final Path clipPath=new Path();
     private final Random rng=new Random(14350);
     // Effects with particles: dust, fire, rain, smoke, snow, sparks.
-    private final Particle[][] particles=new Particle[6][];
-    private final Ripple[] ripples=new Ripple[24];
-    private final int[] strength=new int[EFFECT_COUNT], size=new int[EFFECT_COUNT],
-            density=new int[EFFECT_COUNT], opacity=new int[EFFECT_COUNT],
-            velocity=new int[EFFECT_COUNT], threshold=new int[EFFECT_COUNT],
-            attackMs=new int[EFFECT_COUNT], releaseMs=new int[EFFECT_COUNT],
-            minHz=new int[EFFECT_COUNT], maxHz=new int[EFFECT_COUNT],
-            source=new int[EFFECT_COUNT], layerOrder=new int[EFFECT_COUNT],
-            blend=new int[EFFECT_COUNT], mask=new int[EFFECT_COUNT],
-            maskRadius=new int[EFFECT_COUNT], direction=new int[EFFECT_COUNT];
-    private final int[][] propertySource=new int[EFFECT_COUNT][PROPERTY_COUNT];
-    private final float[][] propertyEnvelope=new float[EFFECT_COUNT][PROPERTY_COUNT];
-    private final AutomationTrack[] automation=new AutomationTrack[EFFECT_COUNT];
+    
+    private final int[] strength=new int[MAX_LAYERS], size=new int[MAX_LAYERS],
+            density=new int[MAX_LAYERS], opacity=new int[MAX_LAYERS],
+            velocity=new int[MAX_LAYERS], threshold=new int[MAX_LAYERS],
+            attackMs=new int[MAX_LAYERS], releaseMs=new int[MAX_LAYERS],
+            minHz=new int[MAX_LAYERS], maxHz=new int[MAX_LAYERS],
+            source=new int[MAX_LAYERS],
+            blend=new int[MAX_LAYERS], mask=new int[MAX_LAYERS],
+            maskRadius=new int[MAX_LAYERS], direction=new int[MAX_LAYERS];
+    private final int[][] propertySource=new int[MAX_LAYERS][PROPERTY_COUNT];
+    private final float[][] propertyEnvelope=new float[MAX_LAYERS][PROPERTY_COUNT];
+    private final AutomationTrack[] automation=new AutomationTrack[MAX_LAYERS];
     private long framePositionMs=0L;
-    private final boolean[] enabled=new boolean[EFFECT_COUNT];
-    private final float[] envelope=new float[EFFECT_COUNT];
+    private final boolean[] enabled=new boolean[MAX_LAYERS];
+    private final float[] envelope=new float[MAX_LAYERS];
     private final float[] spectralBins=new float[BandSpectrum.COUNT];
     private boolean economyMode=true;
     private boolean spectrumEnabled=true;
@@ -65,9 +76,9 @@ public final class ReactiveView extends View {
     private AudioClock clock;
     private boolean portrait=true;
     private long lastDraw=0, previousPosition=-1, lastKickEvent=-999;
-    private float phase=0, previousWater=0f, previousSparks=0f;
+    private float phase=0;
     private AudioAnalyzer.Features live=AudioAnalyzer.Features.zero();
-    private int nextRipple=0;
+    private long exportPreviousMs=-1;
 
     private static final class Particle {
         float x,y,vx,vy,r,alpha;
@@ -80,24 +91,7 @@ public final class ReactiveView extends View {
     public ReactiveView(Context context) {
         super(context);
         setLayerType(View.LAYER_TYPE_HARDWARE,null);
-        int[] amounts={150,110,175,95,125,110};
-        for(int group=0;group<particles.length;group++) {
-            particles[group]=new Particle[amounts[group]];
-            for(int j=0;j<amounts[group];j++) {
-                Particle q=new Particle();reset(q,group,true);particles[group][j]=q;
-            }
-        }
-        for(int j=0;j<ripples.length;j++) ripples[j]=new Ripple();
-        int[] defaultSources={2,1,4,0,1,3,0,4,2,0};
-        for(int i=0;i<EFFECT_COUNT;i++) {
-            enabled[i]=i<4;
-            strength[i]=80;size[i]=55;density[i]=60;opacity[i]=75;
-            velocity[i]=50;threshold[i]=15;attackMs[i]=18;releaseMs[i]=165;
-            minHz[i]=35;maxHz[i]=150;source[i]=defaultSources[i];layerOrder[i]=i;
-            maskRadius[i]=65;direction[i]=0;
-            automation[i]=new AutomationTrack();
-            java.util.Arrays.fill(propertySource[i],-1);
-        }
+        for(int i=0;i<EFFECT_COUNT;i++) addLayer(i);
     }
     public void setEconomyMode(boolean v) {economyMode=v;invalidate();}
     public boolean isEconomyMode() {return economyMode;}
@@ -109,7 +103,8 @@ public final class ReactiveView extends View {
     public int getCameraShake() {return cameraShake;}
     public void setClock(AudioClock value) {clock=value;invalidate();}
     public void setTrack(AudioAnalyzer.Track value) {
-        track=value;previousPosition=-1;previousWater=0f;previousSparks=0f;
+        track=value;previousPosition=-1;lastKickEvent=-999;
+        for(int id:layerOrder) {prevWaterLevel[id]=prevSparkLevel[id]=0f;}
         for(int i=0;i<envelope.length;i++) {
             envelope[i]=0f;
             java.util.Arrays.fill(propertyEnvelope[i],0f);
@@ -174,25 +169,154 @@ public final class ReactiveView extends View {
     public void clearStrengthKeyframes(int i) {automation[i].clear();invalidate();}
     public String encodeStrengthKeyframes(int i) {return automation[i].encode();}
     public void decodeStrengthKeyframes(int i,String text) {automation[i].decode(text);invalidate();}
-    public int[] getLayerOrder() {return layerOrder.clone();}
-    public void setLayerOrder(int[] value) {
-        if(value==null || value.length!=EFFECT_COUNT) return;
-        boolean[] seen=new boolean[EFFECT_COUNT];
-        for(int index:value) {
-            if(index<0 || index>=EFFECT_COUNT || seen[index]) return;
-            seen[index]=true;
-        }
-        System.arraycopy(value,0,layerOrder,0,EFFECT_COUNT);
-        invalidate();
+    public int[] getLayerOrder() {
+        int[] result=new int[layerOrder.size()];
+        for(int i=0;i<result.length;i++)result[i]=layerOrder.get(i);
+        return result;
     }
-    public boolean moveLayer(int effect,int delta) {
-        for(int i=0;i<layerOrder.length;i++) if(layerOrder[i]==effect) {
-            int next=i+delta;
-            if(next<0 || next>=layerOrder.length) return false;
-            int swap=layerOrder[next];layerOrder[next]=effect;layerOrder[i]=swap;
-            invalidate();return true;
+    public int getLayerType(int index) {return layerType[index];}
+    public int getLayerCount() {return layerOrder.size();}
+    public boolean isAllocated(int id) {return id>=0 && id<MAX_LAYERS && allocated[id];}
+    public int addLayer(int type) {
+        if(type<0 || type>=EFFECT_COUNT)return -1;
+        for(int id=0;id<MAX_LAYERS;id++) if(!allocated[id]) {
+            allocated[id]=true;layerType[id]=type;layerOrder.add(id);
+            strength[id]=80;size[id]=55;density[id]=60;opacity[id]=75;
+            velocity[id]=50;threshold[id]=15;attackMs[id]=18;releaseMs[id]=165;
+            minHz[id]=35;maxHz[id]=150;
+            int[] defaultSources={2,1,4,0,1,3,0,4,2,0};
+            source[id]=defaultSources[type];enabled[id]=id<4;
+            maskRadius[id]=65;direction[id]=0;blend[id]=0;mask[id]=0;
+            automation[id]=new AutomationTrack();
+            java.util.Arrays.fill(propertySource[id],-1);
+            java.util.Arrays.fill(propertyEnvelope[id],0f);
+            envelope[id]=0f;prevWaterLevel[id]=prevSparkLevel[id]=0f;
+            initParticles(id);
+            invalidate();return id;
         }
-        return false;
+        return -1;
+    }
+    private void initParticles(int id) {
+        int type=layerType[id];
+        int[] amounts={150,110,175,95,125,110};
+        int group=type==DUST?0:type==FIRE?1:type==RAIN?2:type==SMOKE?3:
+                type==SNOW?4:type==SPARKS?5:-1;
+        if(group>=0) {
+            layerParticles[id]=new Particle[amounts[group]];
+            for(int i=0;i<layerParticles[id].length;i++) {
+                Particle q=new Particle();reset(q,group,true);layerParticles[id][i]=q;
+            }
+        } else layerParticles[id]=new Particle[0];
+        if(type==WATER){
+            layerRipples[id]=new Ripple[24];
+            for(int i=0;i<24;i++)layerRipples[id][i]=new Ripple();
+        }else layerRipples[id]=new Ripple[0];
+    }
+    public int duplicateLayer(int sourceId) {
+        if(!isAllocated(sourceId)) return -1;
+        int id=addLayer(layerType[sourceId]);if(id<0)return -1;
+        copyParameters(sourceId,id);
+        // Place duplicate immediately above its source, not at the end.
+        layerOrder.remove(Integer.valueOf(id));
+        layerOrder.add(layerOrder.indexOf(sourceId)+1,id);
+        invalidate();return id;
+    }
+    private void copyParameters(int src,int dst) {
+        enabled[dst]=enabled[src];source[dst]=source[src];
+        strength[dst]=strength[src];density[dst]=density[src];size[dst]=size[src];
+        opacity[dst]=opacity[src];velocity[dst]=velocity[src];threshold[dst]=threshold[src];
+        attackMs[dst]=attackMs[src];releaseMs[dst]=releaseMs[src];
+        minHz[dst]=minHz[src];maxHz[dst]=maxHz[src];
+        blend[dst]=blend[src];mask[dst]=mask[src];maskRadius[dst]=maskRadius[src];
+        direction[dst]=direction[src];
+        System.arraycopy(propertySource[src],0,propertySource[dst],0,PROPERTY_COUNT);
+        automation[dst].decode(automation[src].encode());
+    }
+    public boolean removeLayer(int id) {
+        if(!isAllocated(id))return false;
+        allocated[id]=false;layerOrder.remove(Integer.valueOf(id));
+        layerParticles[id]=null;layerRipples[id]=null;automation[id]=null;
+        invalidate();return true;
+    }
+    public boolean moveLayer(int id,int delta) {
+        int idx=layerOrder.indexOf(id),target=idx+delta;
+        if(idx<0 || target<0 || target>=layerOrder.size())return false;
+        java.util.Collections.swap(layerOrder,idx,target);invalidate();return true;
+    }
+    public void setLayerOrder(int[] ids) {
+        if(ids==null || ids.length!=layerOrder.size())return;
+        java.util.HashSet<Integer> unique=new java.util.HashSet<>();
+        for(int id:ids)if(!isAllocated(id)||!unique.add(id))return;
+        layerOrder.clear();for(int id:ids)layerOrder.add(id);invalidate();
+    }
+    /** JSON project preset: ordered independent layer instances. */
+    public String exportProjectJson() {
+        try {
+            JSONObject root=new JSONObject();root.put("version",2);
+            root.put("portrait",portrait);root.put("eco",economyMode);
+            root.put("spectrum",spectrumEnabled);root.put("spectrumScale",spectrumScale);
+            root.put("cameraShake",cameraShake);
+            JSONArray layers=new JSONArray();
+            for(int id:layerOrder) {
+                JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
+                o.put("source",source[id]);o.put("strength",strength[id]);o.put("density",density[id]);
+                o.put("size",size[id]);o.put("opacity",opacity[id]);o.put("velocity",velocity[id]);
+                o.put("threshold",threshold[id]);o.put("attack",attackMs[id]);o.put("release",releaseMs[id]);
+                o.put("minHz",minHz[id]);o.put("maxHz",maxHz[id]);o.put("blend",blend[id]);
+                o.put("mask",mask[id]);o.put("maskRadius",maskRadius[id]);o.put("direction",direction[id]);
+                JSONArray routes=new JSONArray();for(int j:propertySource[id])routes.put(j);
+                o.put("routes",routes);o.put("automation",automation[id].encode());layers.put(o);
+            }
+            root.put("layers",layers);return root.toString();
+        }catch(Exception e){throw new IllegalStateException("Preset JSON gagal",e);}
+    }
+    public boolean importProjectJson(String json) {
+        if(json==null||json.isEmpty())return false;
+        try {
+            JSONObject root=new JSONObject(json);JSONArray arr=root.getJSONArray("layers");
+            if(arr.length()>MAX_LAYERS)return false;
+            for(int id:getLayerOrder())removeLayer(id);
+            for(int j=0;j<arr.length();j++) {
+                JSONObject o=arr.getJSONObject(j);
+                int id=addLayer(o.getInt("type"));
+                if(id<0)throw new IllegalStateException("Invalid layer");
+                enabled[id]=o.optBoolean("enabled",true);
+                setSource(id,o.optInt("source",0));setStrength(id,o.optInt("strength",80));
+                setDensity(id,o.optInt("density",60));setSize(id,o.optInt("size",55));
+                setOpacity(id,o.optInt("opacity",75));setVelocity(id,o.optInt("velocity",50));
+                setThreshold(id,o.optInt("threshold",15));setAttack(id,o.optInt("attack",18));
+                setRelease(id,o.optInt("release",165));
+                setFrequency(id,o.optInt("minHz",35),o.optInt("maxHz",150));
+                setBlend(id,o.optInt("blend",0));setMask(id,o.optInt("mask",0));
+                setMaskRadius(id,o.optInt("maskRadius",65));setDirection(id,o.optInt("direction",0));
+                JSONArray routes=o.optJSONArray("routes");
+                if(routes!=null)for(int k=0;k<Math.min(PROPERTY_COUNT,routes.length());k++)
+                    setPropertySource(id,k,routes.optInt(k,-1));
+                automation[id].decode(o.optString("automation",""));
+            }
+            setPortrait(root.optBoolean("portrait",true));setEconomyMode(root.optBoolean("eco",true));
+            setSpectrumEnabled(root.optBoolean("spectrum",true));
+            setSpectrumScale(root.optInt("spectrumScale",55));setCameraShake(root.optInt("cameraShake",0));
+            invalidate();return true;
+        }catch(Exception e){return false;}
+    }
+    public AudioAnalyzer.Track getTrack() {return track;}
+    public Bitmap getBackdrop() {return backdrop;}
+    /** On background thread, render consecutive frames in order, from t=0. */
+    public void renderExportFrame(Canvas canvas,int width,int height,long positionMs) {
+        float dt=exportPreviousMs<0 ? 0f : Math.max(0f,(positionMs-exportPreviousMs)/1000f);
+        exportPreviousMs=positionMs;
+        advance(positionMs,track!=null,dt);
+        render(canvas,width,height,dt);
+    }
+    public void resetExport() {
+        exportPreviousMs=-1;phase=0f;lastKickEvent=-999;previousPosition=-1;
+        for(int id:layerOrder) {
+            envelope[id]=0;java.util.Arrays.fill(propertyEnvelope[id],0f);
+            prevWaterLevel[id]=prevSparkLevel[id]=0;
+            for(Ripple ring:layerRipples[id])ring.active=false;
+            initParticles(id);
+        }
     }
     private static int limit(int v,int lo,int hi) {return Math.max(lo,Math.min(hi,v));}
     private static float clamp(float v) {return BandSpectrum.clamp(v);}
@@ -234,17 +358,22 @@ public final class ReactiveView extends View {
         lastDraw=now;
         long position=clock==null?0:clock.positionMs();
         boolean playing=clock!=null && clock.playing() && track!=null;
+        advance(position,playing,dt);
+        render(canvas,getWidth(),getHeight(),playing?dt:0f);
+        if(playing) postInvalidateDelayed(economyMode?33:16);
+    }
+    private void advance(long position,boolean playing,float dt) {
         live=track==null?AudioAnalyzer.Features.zero():track.at(position);
         if(track!=null) track.spectrumAt(position,spectralBins);
         if(position<previousPosition-100) {
-            previousWater=0;previousSparks=0;lastKickEvent=-999;
-            for(int i=0;i<envelope.length;i++) envelope[i]=0f;
-            for(Ripple ring:ripples) ring.active=false;
+            lastKickEvent=-999;
+            for(int i:layerOrder) {prevWaterLevel[i]=prevSparkLevel[i]=0f;for(Ripple ring:layerRipples[i])ring.active=false;}
+            for(int i:layerOrder) {envelope[i]=0f;java.util.Arrays.fill(propertyEnvelope[i],0f);}
         }
         previousPosition=position;
         framePositionMs=position;
         if(playing) {
-            for(int i=0;i<EFFECT_COUNT;i++) {
+            for(int i:layerOrder) {
                 envelope[i]=ReactiveEnvelope.step(envelope[i],readSource(i,position),
                         threshold[i]/100f,attackMs[i],releaseMs[i],dt*1000);
                 for(int prop=0;prop<PROPERTY_COUNT;prop++) {
@@ -255,25 +384,33 @@ public final class ReactiveView extends View {
                 }
             }
             phase+=dt;
-            float water=envelope[WATER];
-            float sparks=envelope[SPARKS];
-            boolean waterEvent=water>.34f && previousWater<=.34f;
-            boolean sparkEvent=sparks>.42f && previousSparks<=.42f;
             boolean kickEvent=live.kick>.40f && position-lastKickEvent>110;
             if(kickEvent) lastKickEvent=position;
-            if((waterEvent || (kickEvent && source[WATER]<=2)) && enabled[WATER]) {
-                Ripple ring=ripples[nextRipple++%ripples.length];
-                ring.active=true;ring.age=0;ring.amp=clamp(water+.3f);
-                ring.x=.5f+(rng.nextFloat()-.5f)*.22f;ring.y=.72f;
+            for(int i:layerOrder) {
+                if(!enabled[i])continue;
+                if(layerType[i]==WATER) {
+                    float level=envelope[i];
+                    boolean event=level>.34f && prevWaterLevel[i]<=.34f;
+                    if(event || (kickEvent && source[i]<=2)) {
+                        Ripple[] rings=layerRipples[i];
+                        Ripple ring=rings[layerRippleCursor[i]++%rings.length];
+                        ring.active=true;ring.age=0;ring.amp=clamp(level+.3f);
+                        ring.x=.5f+(rng.nextFloat()-.5f)*.22f;ring.y=.72f;
+                    }
+                    prevWaterLevel[i]=level;
+                } else if(layerType[i]==SPARKS) {
+                    float level=envelope[i];
+                    boolean event=level>.42f && prevSparkLevel[i]<=.42f;
+                    if(event || (kickEvent && source[i]<=2))
+                        for(Particle q:layerParticles[i])reset(q,5,false);
+                    prevSparkLevel[i]=level;
+                }
             }
-            if((sparkEvent || (kickEvent && source[SPARKS]<=2)) && enabled[SPARKS]) {
-                for(Particle q:particles[5]) reset(q,5,false);
-            }
-            previousWater=water;previousSparks=sparks;
+
         } else if(track!=null) {
             // Scrubbing or paused preview should reflect the selected timestamp,
             // not stale effect values from the last playback frame.
-            for(int i=0;i<EFFECT_COUNT;i++) {
+            for(int i:layerOrder) {
                 envelope[i]=ReactiveEnvelope.step(0,readSource(i,position),
                         threshold[i]/100f,0,0,0);
                 for(int prop=0;prop<PROPERTY_COUNT;prop++) {
@@ -283,8 +420,6 @@ public final class ReactiveView extends View {
                 }
             }
         }
-        render(canvas,getWidth(),getHeight(),playing?dt:0f);
-        if(playing) postInvalidateDelayed(economyMode?33:16);
     }
     public Bitmap snapshot(int width,int height) {
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
@@ -308,13 +443,14 @@ public final class ReactiveView extends View {
         drawBackground(canvas,h);
         for(int fx:layerOrder) {
             if(!enabled[fx]) continue;
+            activeLayer=fx;
             int save=canvas.save();
             applyMask(canvas,fx,h);
             if(blend[fx]!=0) {
                 blendPaint.setXfermode(new PorterDuffXfermode(blendMode(fx)));
                 canvas.saveLayer(0,0,400,h,blendPaint);
             }
-            switch(fx) {
+            switch(layerType[fx]) {
                 case DUST:drawDust(canvas,h,dt);break;
                 case FIRE:drawFire(canvas,h,dt);break;
                 case RAIN:drawRain(canvas,h,dt);break;
@@ -403,52 +539,52 @@ public final class ReactiveView extends View {
         }
     }
     private void drawDust(Canvas c,int h,float dt) {
-        float power=intensity(DUST);
-        int count=(int)(particles[0].length*amount(DUST));
+        float power=intensity(activeLayer);
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         for(int i=0;i<count;i++) {
-            Particle q=particles[0][i];
-            applyWind(q,DUST,dt);
-            q.x+=(q.vx+power*.08f)*dt*speed(DUST);
-            q.y+=q.vy*dt*speed(DUST)*(1+power*1.7f);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=(q.vx+power*.08f)*dt*speed(activeLayer);
+            q.y+=q.vy*dt*speed(activeLayer)*(1+power*1.7f);
             if(q.y<-.02f||q.x>1.05f||q.x<-.05f) reset(q,0,false);
-            p.setColor(rgba(220,204,255,q.alpha*(.25f+power*.7f)*opacity(DUST)));
-            c.drawCircle(q.x*400,q.y*h,q.r*volume(DUST)*(1+power*2.7f),p);
+            p.setColor(rgba(220,204,255,q.alpha*(.25f+power*.7f)*opacity(activeLayer)));
+            c.drawCircle(q.x*400,q.y*h,q.r*volume(activeLayer)*(1+power*2.7f),p);
         }
     }
     private void drawFire(Canvas c,int h,float dt) {
-        float power=intensity(FIRE),vol=volume(FIRE);
-        for(int i=0;i<(int)(14*amount(FIRE));i++) {
+        float power=intensity(activeLayer),vol=volume(activeLayer);
+        for(int i=0;i<(int)(14*amount(activeLayer));i++) {
             float x=(i+.5f)*400/14f;
             float flame=(10f+28f*power)*(0.7f+((i*17)%9)/18f)*vol;
-            float sway=(float)Math.sin(phase*7*speed(FIRE)+i)*7;
+            float sway=(float)Math.sin(phase*7*speed(activeLayer)+i)*7;
             Path path=reusableFlame;path.reset();path.moveTo(x-13*vol,h);
             path.quadTo(x+sway-13,h-flame*.55f,x+sway,h-flame);
             path.quadTo(x+sway+10,h-flame*.35f,x+15*vol,h);path.close();
-            p.setColor(rgba(255,100+(i%4)*13,39,(.32f+power*.4f)*opacity(FIRE)));
+            p.setColor(rgba(255,100+(i%4)*13,39,(.32f+power*.4f)*opacity(activeLayer)));
             c.drawPath(path,p);
         }
-        int count=(int)(particles[1].length*amount(FIRE));
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         for(int i=0;i<count;i++) {
-            Particle q=particles[1][i];
-            applyWind(q,FIRE,dt);
-            q.x+=(q.vx+.03f*(float)Math.sin(phase*3+i))*dt*speed(FIRE)*(1+power);
-            q.y+=q.vy*dt*speed(FIRE)*(.6f+power*2.4f);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=(q.vx+.03f*(float)Math.sin(phase*3+i))*dt*speed(activeLayer)*(1+power);
+            q.y+=q.vy*dt*speed(activeLayer)*(.6f+power*2.4f);
             if(q.y<0f||q.x<0||q.x>1) reset(q,1,false);
-            p.setColor(rgba(255,120+(i%3)*43,39,q.alpha*(.35f+power*.6f)*opacity(FIRE)));
+            p.setColor(rgba(255,120+(i%3)*43,39,q.alpha*(.35f+power*.6f)*opacity(activeLayer)));
             c.drawCircle(q.x*400,q.y*h,(q.r+power*2.3f)*vol,p);
         }
     }
     private void drawRain(Canvas c,int h,float dt) {
-        float power=intensity(RAIN),vol=volume(RAIN);
-        int count=(int)(particles[2].length*amount(RAIN));
+        float power=intensity(activeLayer),vol=volume(activeLayer);
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);
         for(int i=0;i<count;i++) {
-            Particle q=particles[2][i];
-            applyWind(q,RAIN,dt);
-            q.x+=q.vx*dt*speed(RAIN)*(.5f+power);
-            q.y+=q.vy*dt*speed(RAIN)*(.65f+power*2f);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=q.vx*dt*speed(activeLayer)*(.5f+power);
+            q.y+=q.vy*dt*speed(activeLayer)*(.65f+power*2f);
             if(q.y>1.1f||q.x>1.1f) reset(q,2,false);
-            p.setColor(rgba(159,198,255,(.10f+q.alpha*.34f+power*.24f)*opacity(RAIN)));
+            p.setColor(rgba(159,198,255,(.10f+q.alpha*.34f+power*.24f)*opacity(activeLayer)));
             p.setStrokeWidth(.6f+vol*.4f);
             float length=(4f+power*20f)*vol;
             c.drawLine(q.x*400,q.y*h,q.x*400-length*.22f,q.y*h-length,p);
@@ -456,101 +592,101 @@ public final class ReactiveView extends View {
         p.setStyle(Paint.Style.FILL);
     }
     private void drawWater(Canvas c,int h,float dt) {
-        float power=intensity(WATER);
+        float power=intensity(activeLayer);
         p.setStyle(Paint.Style.STROKE);
-        for(Ripple ripple:ripples) {
+        for(Ripple ripple:layerRipples[activeLayer]) {
             if(!ripple.active) continue;
-            ripple.age+=dt*(.52f+power*.5f)*speed(WATER);
+            ripple.age+=dt*(.52f+power*.5f)*speed(activeLayer);
             if(ripple.age>1.05f) {ripple.active=false;continue;}
-            p.setColor(rgba(88,204,255,(1-ripple.age)*(.4f+power*.4f)*opacity(WATER)));
+            p.setColor(rgba(88,204,255,(1-ripple.age)*(.4f+power*.4f)*opacity(activeLayer)));
             p.setStrokeWidth(1.5f+(1-ripple.age)*2f);
             c.drawCircle(ripple.x*400,ripple.y*h,
-                    ripple.age*(85+ripple.amp*80)*volume(WATER),p);
+                    ripple.age*(85+ripple.amp*80)*volume(activeLayer),p);
         }
         p.setStyle(Paint.Style.FILL);
-        p.setColor(rgba(32,148,226,(.12f+power*.14f)*amount(WATER)*opacity(WATER)));
+        p.setColor(rgba(32,148,226,(.12f+power*.14f)*amount(activeLayer)*opacity(activeLayer)));
         c.drawRect(0,h-16f-power*12,400,h,p);
     }
     private void drawSmoke(Canvas c,int h,float dt) {
-        float power=intensity(SMOKE);
-        int count=(int)(particles[3].length*amount(SMOKE));
+        float power=intensity(activeLayer);
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         for(int i=0;i<count;i++) {
-            Particle q=particles[3][i];
-            applyWind(q,SMOKE,dt);
-            q.x+=(q.vx+(float)Math.sin(phase*2+i)*.07f)*dt*speed(SMOKE);
-            q.y+=q.vy*dt*speed(SMOKE)*(1+power);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=(q.vx+(float)Math.sin(phase*2+i)*.07f)*dt*speed(activeLayer);
+            q.y+=q.vy*dt*speed(activeLayer)*(1+power);
             if(q.y<-.08f||q.x<-.05f||q.x>1.05f) reset(q,3,false);
-            p.setColor(rgba(168,161,197,q.alpha*(.10f+power*.18f)*opacity(SMOKE)));
-            c.drawCircle(q.x*400,q.y*h,q.r*(2.2f+power*4f)*volume(SMOKE),p);
+            p.setColor(rgba(168,161,197,q.alpha*(.10f+power*.18f)*opacity(activeLayer)));
+            c.drawCircle(q.x*400,q.y*h,q.r*(2.2f+power*4f)*volume(activeLayer),p);
         }
     }
     private void drawSnow(Canvas c,int h,float dt) {
-        float power=intensity(SNOW);
-        int count=(int)(particles[4].length*amount(SNOW));
+        float power=intensity(activeLayer);
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         for(int i=0;i<count;i++) {
-            Particle q=particles[4][i];
-            applyWind(q,SNOW,dt);
-            q.x+=(q.vx*.1f+(float)Math.sin(phase*.9f+i)*.025f)*dt*speed(SNOW);
-            q.y+=q.vy*dt*speed(SNOW)*(1+power*1.2f);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=(q.vx*.1f+(float)Math.sin(phase*.9f+i)*.025f)*dt*speed(activeLayer);
+            q.y+=q.vy*dt*speed(activeLayer)*(1+power*1.2f);
             if(q.y>1.05f||q.x<-.05f||q.x>1.05f) reset(q,4,false);
-            p.setColor(rgba(235,242,255,q.alpha*(.35f+power*.55f)*opacity(SNOW)));
-            c.drawCircle(q.x*400,q.y*h,q.r*volume(SNOW)*(1+power*.8f),p);
+            p.setColor(rgba(235,242,255,q.alpha*(.35f+power*.55f)*opacity(activeLayer)));
+            c.drawCircle(q.x*400,q.y*h,q.r*volume(activeLayer)*(1+power*.8f),p);
         }
     }
     private void drawSparks(Canvas c,int h,float dt) {
-        float power=intensity(SPARKS);
-        int count=(int)(particles[5].length*amount(SPARKS));
+        float power=intensity(activeLayer);
+        int count=(int)(layerParticles[activeLayer].length*amount(activeLayer));
         p.setStyle(Paint.Style.STROKE);
         for(int i=0;i<count;i++) {
-            Particle q=particles[5][i];
-            applyWind(q,SPARKS,dt);
-            q.x+=q.vx*dt*speed(SPARKS)*(1+power*2f);
-            q.y+=q.vy*dt*speed(SPARKS)*(1+power*2f);
+            Particle q=layerParticles[activeLayer][i];
+            applyWind(q,activeLayer,dt);
+            q.x+=q.vx*dt*speed(activeLayer)*(1+power*2f);
+            q.y+=q.vy*dt*speed(activeLayer)*(1+power*2f);
             if(q.y<-.08f||q.x<0||q.x>1) reset(q,5,false);
             float px=q.x*400,py=q.y*h;
-            p.setColor(rgba(255,189+(i%4)*14,80,q.alpha*(.35f+power*.65f)*opacity(SPARKS)));
-            p.setStrokeWidth(.4f+volume(SPARKS));
-            c.drawLine(px,py,px-q.vx*12*volume(SPARKS),py-q.vy*18*volume(SPARKS),p);
+            p.setColor(rgba(255,189+(i%4)*14,80,q.alpha*(.35f+power*.65f)*opacity(activeLayer)));
+            p.setStrokeWidth(.4f+volume(activeLayer));
+            c.drawLine(px,py,px-q.vx*12*volume(activeLayer),py-q.vy*18*volume(activeLayer),p);
         }
         p.setStyle(Paint.Style.FILL);
     }
     private void drawLightning(Canvas c,int h) {
-        float power=intensity(LIGHTNING);
+        float power=intensity(activeLayer);
         if(power<.1f) return;
         p.setStyle(Paint.Style.STROKE);
-        int count=Math.max(1,Math.round(4*amount(LIGHTNING)));
+        int count=Math.max(1,Math.round(4*amount(activeLayer)));
         for(int j=0;j<count;j++) {
             Path path=new Path();float x=50+j*300f/Math.max(1,count);
             path.moveTo(x,0);
             for(int k=1;k<=9;k++) {
-                float bend=(float)Math.sin(k*13.7+j*8.3+phase*speed(LIGHTNING)*33)*18*volume(LIGHTNING);
+                float bend=(float)Math.sin(k*13.7+j*8.3+phase*speed(activeLayer)*33)*18*volume(activeLayer);
                 path.lineTo(x+bend,h*k/9f);
             }
-            p.setStrokeWidth((1.2f+power*3f)*volume(LIGHTNING));
-            p.setColor(rgba(165,214,255,power*.9f*opacity(LIGHTNING)));
+            p.setStrokeWidth((1.2f+power*3f)*volume(activeLayer));
+            p.setColor(rgba(165,214,255,power*.9f*opacity(activeLayer)));
             c.drawPath(path,p);
         }
         p.setStyle(Paint.Style.FILL);
     }
     private void drawGlow(Canvas c,int h) {
-        float power=intensity(GLOW);
+        float power=intensity(activeLayer);
         p.setStyle(Paint.Style.STROKE);
-        int count=Math.max(1,Math.round(10*amount(GLOW)));
+        int count=Math.max(1,Math.round(10*amount(activeLayer)));
         for(int i=count;i>=0;i--) {
-            float width=2+i*2.5f*volume(GLOW);
+            float width=2+i*2.5f*volume(activeLayer);
             p.setStrokeWidth(width);
-            p.setColor(rgba(171,125,255,power*.10f*opacity(GLOW)));
+            p.setColor(rgba(171,125,255,power*.10f*opacity(activeLayer)));
             c.drawCircle(200,h*.5f,49+power*28,p);
         }
         p.setStyle(Paint.Style.FILL);
     }
     private void drawGlitch(Canvas c,int h) {
-        float power=intensity(GLITCH);
-        int count=(int)(15*amount(GLITCH));
+        float power=intensity(activeLayer);
+        int count=(int)(15*amount(activeLayer));
         for(int i=0;i<count;i++) {
-            float y=((i*131+(int)(phase*speed(GLITCH)*300))%Math.max(1,h));
-            float width=(20+power*300)*volume(GLITCH);
-            p.setColor(rgba(i%2==0?145:255,85,255,power*.24f*opacity(GLITCH)));
+            float y=((i*131+(int)(phase*speed(activeLayer)*300))%Math.max(1,h));
+            float width=(20+power*300)*volume(activeLayer);
+            p.setColor(rgba(i%2==0?145:255,85,255,power*.24f*opacity(activeLayer)));
             c.drawRect((float)Math.sin(i*27+phase)*120+120,y,
                     Math.min(400,(float)Math.sin(i*27+phase)*120+120+width),y+1+power*3,p);
         }
