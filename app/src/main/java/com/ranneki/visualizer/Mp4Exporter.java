@@ -131,8 +131,8 @@ public final class Mp4Exporter {
             gl=new CanvasEncoderSurface(surface,w,h,scene.getShaderSource());
             encoder.start();
             muxer=new MediaMuxer(dest.getAbsolutePath(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-            frame=Bitmap.createBitmap(profile.rasterWidth(),profile.rasterHeight(),Bitmap.Config.ARGB_8888);
-            Canvas canvas=new Canvas(frame);
+            Canvas canvas=null;
+            int gpuOnlyFrames=0,compatibilityFrames=0;
             scene.resetExport();
             long totalFrames=FrameTimebase.frameCount(durationMs,fps);
             MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
@@ -140,14 +140,28 @@ public final class Mp4Exporter {
                 check(stop);
                 long ms=FrameTimebase.frameMillis(index,fps);
                 long renderStart=System.nanoTime();
-                GpuEffectFrame particles=scene.renderGpuExportFrame(canvas,frame.getWidth(),frame.getHeight(),ms);
+                boolean gpuOnly=scene.supportsGpuOnlyAt(ms);
+                GpuSceneFrame gpuScene=null;
+                GpuEffectFrame particles=null;
+                if(gpuOnly){
+                    gpuScene=scene.renderGpuOnlyExportFrame(ms);
+                    gpuOnlyFrames++;
+                } else {
+                    if(frame==null) {
+                        frame=Bitmap.createBitmap(profile.rasterWidth(),profile.rasterHeight(),Bitmap.Config.ARGB_8888);
+                        canvas=new Canvas(frame);
+                    }
+                    particles=scene.renderGpuExportFrame(canvas,frame.getWidth(),frame.getHeight(),ms);
+                    compatibilityFrames++;
+                }
                 long renderTime=System.nanoTime()-renderStart;
                 AudioAnalyzer.Features f=scene.getTrack().at(ms);
                 float pulse=Math.min(1f,f.kick*.75f+f.bass*.25f);
                 long submitStart=System.nanoTime();
-                gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
-                        profile.chromaticPercent/100f,profile.vignettePercent/100f,
-                        ms/1000f,f,particles);
+                if(gpuOnly)gl.submitGpuScene(gpuScene,FrameTimebase.presentationNs(index,fps),pulse,
+                        profile.chromaticPercent/100f,profile.vignettePercent/100f,ms/1000f,f);
+                else gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
+                        profile.chromaticPercent/100f,profile.vignettePercent/100f,ms/1000f,f,particles);
                 metrics.record(renderTime,System.nanoTime()-submitStart);
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
                 if(index%fps==0) {
@@ -161,7 +175,8 @@ public final class Mp4Exporter {
             encoder.signalEndOfInputStream();
             muxerStarted=drain(encoder,muxer,info,true,muxerStarted);
             if(!muxerStarted)throw new IllegalStateException("Video encoder tidak mengeluarkan track");
-            return gl.getGpuReport();
+            return gl.getGpuReport()+" | GPU-only export frames: "+gpuOnlyFrames+
+                    " | media compatibility frames: "+compatibilityFrames;
         }finally {
             if(gl!=null)gl.close();
             if(frame!=null && !frame.isRecycled())frame.recycle();

@@ -28,9 +28,9 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan,GpuSceneMath}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest,GpuSceneMathTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest GpuSceneMathTest; do
             java -ea -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Assemble debug APK

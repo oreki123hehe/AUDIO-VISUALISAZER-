@@ -1,0 +1,55 @@
+package com.ranneki.visualizer;
+
+import android.graphics.Bitmap;
+
+/** Immutable per-frame GPU scene input. Static backdrop texture is cached in the GL context.
+ * No full-screen CPU Canvas or Bitmap is needed when fastPath is true. */
+final class GpuSceneFrame {
+    final GpuEffectFrame effects;
+    final Bitmap backdrop;
+    final float[] spectrum;
+    final boolean fastPath, spectrumEnabled;
+    final int spectrumScale;
+    final float kick, bass, shakeX, shakeY;
+    final Item[] drawOrder;
+    GpuSceneFrame(GpuEffectFrame effects, Bitmap backdrop, float[] spectrum,
+            boolean fastPath, boolean spectrumEnabled, int spectrumScale, float kick, float bass,
+            float shakeX,float shakeY,Item[] drawOrder) {
+        this.effects=effects;
+        this.backdrop=backdrop;
+        this.spectrum=spectrum.clone();
+        this.fastPath=fastPath;
+        this.spectrumEnabled=spectrumEnabled;
+        this.spectrumScale=spectrumScale;
+        this.kick=kick;
+        this.bass=bass;
+        this.shakeX=shakeX;this.shakeY=shakeY;
+        this.drawOrder=drawOrder.clone();
+    }
+    static final class Item {
+        final GpuEffectFrame.Layer effect;
+        final Sprite sprite;
+        Item(GpuEffectFrame.Layer layer){effect=layer;sprite=null;}
+        Item(Sprite layer){effect=null;sprite=layer;}
+    }
+    static final class Sprite {
+        final int id,type,blend,mask,color;
+        final Bitmap image;
+        final VideoFrameLayer video;
+        final String text;
+        final long timestampMs,startMs;
+        final float width,height,opacity,shiftX,shiftY,scale,rotation,maskRadius;
+        final float[] polygon;
+        Sprite(int id,int type,Bitmap image,VideoFrameLayer video,String text,int color,
+                long timestampMs,long startMs,float width,float height,float opacity,
+                float shiftX,float shiftY,float scale,float rotation,int blend,int mask,
+                float maskRadius,float[] polygon){
+            this.id=id;this.type=type;this.image=image;this.video=video;this.text=text;
+            this.color=color;this.timestampMs=timestampMs;this.startMs=startMs;
+            this.width=width;this.height=height;this.opacity=opacity;
+            this.shiftX=shiftX;this.shiftY=shiftY;this.scale=scale;this.rotation=rotation;
+            this.blend=blend;this.mask=mask;this.maskRadius=maskRadius;
+            this.polygon=polygon==null?new float[0]:polygon.clone();
+        }
+    }
+}

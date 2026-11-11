@@ -106,10 +106,18 @@ public final class ReactiveView extends View {
     private GpuFrameListener gpuFrameListener;
     /** In the GLES preview path Canvas only composites background/image/video/text.
      * All ten built-in FX types are rendered by GpuParticleRenderer, on a transparent Surface. */
-    public interface GpuFrameListener {void onGpuFrame(GpuEffectFrame frame);}
+    public interface GpuFrameListener {void onGpuFrame(GpuSceneFrame frame);}
     public void setGpuFrameListener(GpuFrameListener listener) {gpuFrameListener=listener;}
     public void setGpuPreviewActive(boolean active) {gpuPreviewActive=active;invalidate();}
     public boolean isGpuPreviewActive(){return gpuPreviewActive;}
+    private float cameraShakeX(){
+        float power=live.kick*cameraShake/100f*8f;
+        return (float)Math.sin(phase*61f)*power;
+    }
+    private float cameraShakeY(){
+        float power=live.kick*cameraShake/100f*8f;
+        return (float)Math.cos(phase*73f)*power;
+    }
     private GpuEffectFrame snapshotGpuFrame(){
         java.util.ArrayList<GpuEffectFrame.Layer> batches=new java.util.ArrayList<>();
         for(int id:layerOrder){
@@ -129,8 +137,8 @@ public final class ReactiveView extends View {
             int dir=animated(id,AutomationParameters.DIRECTION);
             batches.add(new GpuEffectFrame.Layer(id,type,blend[id],mask[id],count,
                     intensity(id),opacity(id),volume(id),speed(id),
-                    (animated(id,AutomationParameters.X)-50)*3.6f/400f,
-                    (animated(id,AutomationParameters.Y)-50)/100f,
+                    ((animated(id,AutomationParameters.X)-50)*3.6f+cameraShakeX())/400f,
+                    (animated(id,AutomationParameters.Y)-50)/100f+cameraShakeY()/(portrait?711f:225f),
                     scale,(animated(id,AutomationParameters.ROTATION)-50)*3.6f,
                     dir==0?-1f:(dir-1)/99f,
                     animated(id,AutomationParameters.MASK_RADIUS)/100f,polygon));
@@ -138,6 +146,63 @@ public final class ReactiveView extends View {
         return new GpuEffectFrame(Math.max(0L,framePositionMs),portrait,
                 batches.toArray(new GpuEffectFrame.Layer[0]));
     }
+    /** The GL compositor handles all standard scene types, including camera shake. */
+    private boolean gpuOnlyAt(long positionMs) {return true;}
+    private GpuSceneFrame snapshotGpuSceneFrame() {
+        GpuEffectFrame fx=snapshotGpuFrame();
+        java.util.ArrayList<GpuSceneFrame.Item> drawOrder=new java.util.ArrayList<>();
+        int h=portrait?711:225;
+        for(int id:layerOrder){
+            if(!enabled[id] || framePositionMs<startTimeMs[id] || framePositionMs>endTimeMs[id])continue;
+            int type=layerType[id];
+            if(type<EFFECT_COUNT){
+                for(GpuEffectFrame.Layer effect:fx.layers)
+                    if(effect.id==id){drawOrder.add(new GpuSceneFrame.Item(effect));break;}
+                continue;
+            }
+            Bitmap bitmap=type==IMAGE?imageLayers[id]:null;
+            VideoFrameLayer video=type==VIDEO?videoSources[id]:null;
+            String text=type==TEXT?layerText[id]:null;
+            if(type==IMAGE && (bitmap==null||bitmap.isRecycled()))continue;
+            if(type==VIDEO && video==null)continue;
+            if(type==TEXT && (text==null||text.isEmpty()))continue;
+            float contentWidth=400f,contentHeight=h;
+            if(type==IMAGE){
+                float strength=volume(id)*(1f+intensity(id)*.32f);
+                float fit=Math.min(260f*strength/bitmap.getWidth(),h*.55f*strength/bitmap.getHeight());
+                contentWidth=bitmap.getWidth()*fit;contentHeight=bitmap.getHeight()*fit;
+            }else if(type==TEXT){
+                float fontSize=(12f+volume(id)*20f)*(1f+.45f*intensity(id));
+                contentWidth=Math.min(395f,280f*fontSize/31f);
+                contentHeight=Math.min(h*.9f,120f*fontSize/31f);
+            }
+            float[] poly=null;
+            if(mask[id]==4&&polygons[id]!=null){
+                PolygonMask p=polygons[id];poly=new float[p.count()*2];
+                for(int j=0;j<p.count();j++){poly[2*j]=p.x(j);poly[2*j+1]=p.y(j);}
+            }
+            drawOrder.add(new GpuSceneFrame.Item(new GpuSceneFrame.Sprite(
+                    id,type,bitmap,video,text,textColor[id],framePositionMs,startTimeMs[id],
+                    contentWidth,contentHeight,opacity(id),
+                    (animated(id,AutomationParameters.X)-50)*3.6f,
+                    (animated(id,AutomationParameters.Y)-50)*h/100f,
+                    .25f+animated(id,AutomationParameters.SCALE)/100f*1.5f,
+                    (animated(id,AutomationParameters.ROTATION)-50)*3.6f,
+                    blend[id],mask[id],animated(id,AutomationParameters.MASK_RADIUS)/100f,poly)));
+        }
+        return new GpuSceneFrame(fx,backdrop,spectralBins,gpuOnlyAt(framePositionMs),
+                spectrumEnabled,spectrumScale,live.kick,live.bass,cameraShakeX(),cameraShakeY(),
+                drawOrder.toArray(new GpuSceneFrame.Item[0]));
+    }
+    /** Advances audio/automation without allocating a full-screen CPU canvas. */
+    public GpuSceneFrame renderGpuOnlyExportFrame(long positionMs) {
+        float dt=exportPreviousMs<0 ? 0f : Math.max(0f,(positionMs-exportPreviousMs)/1000f);
+        exportPreviousMs=positionMs;
+        advance(positionMs,track!=null,dt);
+        return snapshotGpuSceneFrame();
+    }
+    public boolean supportsGpuOnlyAt(long ms) {return gpuOnlyAt(ms);}
+
     /** Single-pass CPU base and GLES particle uniforms for the export GL context. */
     public GpuEffectFrame renderGpuExportFrame(Canvas canvas,int width,int height,long positionMs){
         float dt=exportPreviousMs<0?0f:Math.max(0f,(positionMs-exportPreviousMs)/1000f);
@@ -650,9 +715,11 @@ public final class ReactiveView extends View {
         long position=clock==null?0:clock.positionMs();
         boolean playing=clock!=null && clock.playing() && track!=null;
         advance(position,playing,dt);
-        render(canvas,getWidth(),getHeight(),playing?dt:0f,gpuPreviewActive);
-        if(gpuPreviewActive && gpuFrameListener!=null)
-            gpuFrameListener.onGpuFrame(snapshotGpuFrame());
+        GpuSceneFrame gpuScene=gpuPreviewActive?snapshotGpuSceneFrame():null;
+        if(gpuScene==null || !gpuScene.fastPath)
+            render(canvas,getWidth(),getHeight(),playing?dt:0f,gpuPreviewActive);
+        if(gpuScene!=null && gpuFrameListener!=null)
+            gpuFrameListener.onGpuFrame(gpuScene);
         if(previewMetricsStartNs==0L)previewMetricsStartNs=beginNs;
         if(playing){previewMetrics.record(System.nanoTime()-beginNs,0);previewPacing.record(beginNs);}
         if(playing) postInvalidateDelayed(economyMode?33:16);

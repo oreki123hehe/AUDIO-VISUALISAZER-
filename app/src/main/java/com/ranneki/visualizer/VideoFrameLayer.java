@@ -82,6 +82,47 @@ final class VideoFrameLayer implements Closeable {
             }catch(Exception ignored){}finally{busy.set(false);}
         });
     }
+    /** Request a preview frame without rendering a CPU Canvas. The worker owns decoding. */
+    void requestGpuPreview(long projectMs,long startMs,Runnable refresh) {
+        final long time=wrapped(projectMs,startMs);
+        if(closed || (cachedMs>=0 && Math.abs(cachedMs-time)<95) ||
+                !busy.compareAndSet(false,true))return;
+        previewWorker.execute(()->{
+            try {
+                Bitmap frame=decode(time);
+                synchronized(guard){
+                    if(!closed){
+                        Bitmap old=cached;cached=frame;cachedMs=time;
+                        if(old!=null&&!old.isRecycled())old.recycle();
+                    }else if(frame!=null)frame.recycle();
+                }
+                if(!closed)refresh.run();
+            }catch(Exception ignored){}finally{busy.set(false);}
+        });
+    }
+    long cachedGpuVersion(){synchronized(guard){return cachedMs;}}
+    /** Called on the GLES thread; hold the guard while uploading so the preview worker
+     * cannot recycle its cached bitmap during GLUtils.texImage2D. */
+    boolean uploadGpuPreview(int texture) {
+        synchronized(guard){
+            if(closed||cached==null||cached.isRecycled())return false;
+            android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D,texture);
+            android.opengl.GLUtils.texImage2D(android.opengl.GLES20.GL_TEXTURE_2D,0,cached,0);
+            return true;
+        }
+    }
+    /** Uses scaled MediaMetadataRetriever frames. Decode still uses Android media codecs,
+     * but the clip is transformed, masked and blended on the GPU. */
+    boolean uploadGpuExport(int texture,long projectMs,long startMs) {
+        Bitmap frame=null;
+        try{
+            frame=decode(wrapped(projectMs,startMs));
+            if(frame==null)return false;
+            android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D,texture);
+            android.opengl.GLUtils.texImage2D(android.opengl.GLES20.GL_TEXTURE_2D,0,frame,0);
+            return true;
+        }finally{if(frame!=null&&!frame.isRecycled())frame.recycle();}
+    }
     @Override public void close() {
         closed=true;
         previewWorker.shutdownNow();

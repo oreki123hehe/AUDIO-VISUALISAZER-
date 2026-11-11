@@ -22,9 +22,12 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private int timeUniform,kickUniform,bassUniform,snareUniform,trebleUniform,resolutionUniform;
     private boolean textureAllocated=false;
     private GpuParticleRenderer particleGpu;
+    private GpuSceneRenderer compositor;
+    private FloatBuffer gpuUv;
     private String gpuName="unknown";
     private long totalGpuPoints=0L;
-    String getGpuReport(){return "GPU: "+gpuName+" | GPU particle points: "+totalGpuPoints;}
+    String getGpuReport(){return "GPU: "+gpuName+" | GPU particle points: "+totalGpuPoints+
+            " | "+(compositor==null?"GPU-only frames: 0":compositor.stats());}
     CanvasEncoderSurface(Surface codecSurface,int width,int height,String fragmentSource) {
         this.surface=codecSurface;this.width=width;this.height=height;
         try {
@@ -66,6 +69,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         points=floats(new float[]{-1,-1,1,-1,-1,1,1,1});
         // GLUtils uploads Android Bitmap with its top row at the texture's bottom.
         uv=floats(new float[]{0,1,1,1,0,0,1,0});
+        gpuUv=floats(new float[]{0,0,1,0,0,1,1,1});
         int[] textures=new int[1];GLES20.glGenTextures(1,textures,0);texture=textures[0];
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR);
@@ -74,6 +78,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
         gpuName=GLES20.glGetString(GLES20.GL_VENDOR)+" / "+GLES20.glGetString(GLES20.GL_RENDERER);
         particleGpu=new GpuParticleRenderer();
+        compositor=new GpuSceneRenderer();
         } catch (RuntimeException error) {
             // Invalid user GLSL must never leave an EGL context or codec surface behind.
             try {close();} catch(Exception ignored) { }
@@ -99,6 +104,32 @@ final class CanvasEncoderSurface implements AutoCloseable {
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D,0,frame,0);
             textureAllocated=true;
         } else GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D,0,0,0,frame);
+        renderPostProcess(texture,uv,pulse,chromatic,vignette,timeSeconds,audio);
+        // Draw procedural GPU particles directly over the base scene. No Canvas particle Bitmap uploads.
+        totalGpuPoints+=particleGpu.draw(particles,width,height);
+        int error=GLES20.glGetError();
+        if(error!=GLES20.GL_NO_ERROR)throw new IllegalStateException("OpenGL error "+error);
+        EGLExt.eglPresentationTimeANDROID(display,window,ptsNs);
+        if(!EGL14.eglSwapBuffers(display,window))throw new IllegalStateException("Encoder surface swap failed");
+    }
+    /** Full GPU route: background, cached artwork, reactive particles and spectrum are
+     * rasterized into an offscreen GLES framebuffer; no per-frame Android Canvas Bitmap. */
+    void submitGpuScene(GpuSceneFrame scene,long ptsNs,float pulse,float chromatic,float vignette,
+            float seconds,AudioAnalyzer.Features audio) {
+        compositor.begin(scene,width,height,true);
+        totalGpuPoints+=compositor.composite(scene,particleGpu,width,height,true,null);
+        compositor.spectrum(scene,width,height);
+        compositor.end();
+        GLES20.glViewport(0,0,width,height);
+        GLES20.glDisable(GLES20.GL_BLEND);
+        renderPostProcess(compositor.texture(),gpuUv,pulse,chromatic,vignette,seconds,audio);
+        int err=GLES20.glGetError();
+        if(err!=GLES20.GL_NO_ERROR)throw new IllegalStateException("GPU compositor GL error "+err);
+        EGLExt.eglPresentationTimeANDROID(display,window,ptsNs);
+        if(!EGL14.eglSwapBuffers(display,window))throw new IllegalStateException("GPU compositor encoder swap failed");
+    }
+    private void renderPostProcess(int textureId,FloatBuffer coords,float pulse,float chromatic,
+            float vignette,float timeSeconds,AudioAnalyzer.Features audio) {
         GLES20.glUseProgram(program);
         GLES20.glUniform1f(pulseUniform,Math.max(0f,Math.min(1f,pulse)));
         GLES20.glUniform1f(chromaticUniform,Math.max(0f,Math.min(1f,chromatic)));
@@ -111,26 +142,21 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glUniform2f(resolutionUniform,width,height);
         GLES20.glEnableVertexAttribArray(position);
         GLES20.glEnableVertexAttribArray(texCoord);
-        points.position(0);uv.position(0);
+        points.position(0);coords.position(0);
         GLES20.glVertexAttribPointer(position,2,GLES20.GL_FLOAT,false,0,points);
-        GLES20.glVertexAttribPointer(texCoord,2,GLES20.GL_FLOAT,false,0,uv);
+        GLES20.glVertexAttribPointer(texCoord,2,GLES20.GL_FLOAT,false,0,coords);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glUniform1i(textureUniform,0);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
         GLES20.glDisableVertexAttribArray(position);
         GLES20.glDisableVertexAttribArray(texCoord);
-        // Draw procedural GPU particles directly over the base scene. No Canvas particle Bitmap uploads.
-        totalGpuPoints+=particleGpu.draw(particles,width,height);
-        int error=GLES20.glGetError();
-        if(error!=GLES20.GL_NO_ERROR)throw new IllegalStateException("OpenGL error "+error);
-        EGLExt.eglPresentationTimeANDROID(display,window,ptsNs);
-        if(!EGL14.eglSwapBuffers(display,window))throw new IllegalStateException("Encoder surface swap failed");
     }
     @Override public void close() {
         if(display!=EGL14.EGL_NO_DISPLAY) {
             if(context!=EGL14.EGL_NO_CONTEXT) {
                 EGL14.eglMakeCurrent(display,window,window,context);
                 if(particleGpu!=null){particleGpu.close();particleGpu=null;}
+                if(compositor!=null){compositor.close();compositor=null;}
                 if(texture!=0)GLES20.glDeleteTextures(1,new int[]{texture},0);
                 if(program!=0)GLES20.glDeleteProgram(program);
             }

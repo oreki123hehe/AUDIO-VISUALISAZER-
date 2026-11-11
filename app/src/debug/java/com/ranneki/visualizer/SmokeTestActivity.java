@@ -70,11 +70,20 @@ public final class SmokeTestActivity extends Activity {
             if(!verifyShader.importProjectJson(json) ||
                     !ShaderSource.NEON.equals(verifyShader.getShaderSource()))
                 throw new IllegalStateException("GLSL shader project serialization failed");
+            // Prove the compositor can upload static artwork only once, then render
+            // the entire background + effects + spectrum in the GLES framebuffer.
+            android.graphics.Bitmap artwork=android.graphics.Bitmap.createBitmap(
+                    96,96,android.graphics.Bitmap.Config.ARGB_8888);
+            artwork.eraseColor(0xff284471);
+            scene.setBackdrop(artwork);
             ExportProfile profile=new ExportProfile(320,568,30,75,15,10);
             String stats=Mp4Exporter.export(this,Uri.fromFile(wav),Uri.fromFile(mp4),
                     scene,profile,2000,new AtomicBoolean(false),(percent,stage)->{});
             if(!stats.contains("GPU particle points:") || stats.contains("GPU particle points: 0"))
                 throw new IllegalStateException("GPU effects were not submitted: "+stats);
+            if(!stats.contains("GPU-only export frames: 60") ||
+                    !stats.contains("cached background texture uploads: 1"))
+                throw new IllegalStateException("GPU compositor did not eliminate frame-by-frame CPU uploads: "+stats);
             if(!mp4.exists() || mp4.length()<4096)
                 throw new IllegalStateException("MP4 not written");
             MediaExtractor extractor=new MediaExtractor();
@@ -114,7 +123,31 @@ public final class SmokeTestActivity extends Activity {
                 imported.setLayerVideoUri(last,imported.getVideoUri(last));
                 imported.closeVideoLayers();
             }finally {archive.delete();}
-            return "H264/AAC + video layer + polygon + portable ZIP verified: "+mp4.length()+" bytes; "+stats;
+            // The real GLES compositor must now also handle image, text and decoded
+            // video layers in order, without a full-frame CPU Canvas upload.
+            scene.setLayerVideoUri(videoLayer,Uri.fromFile(mp4).toString());
+            int imageLayer=scene.addLayer(ReactiveView.IMAGE);
+            android.graphics.Bitmap badge=android.graphics.Bitmap.createBitmap(
+                    72,72,android.graphics.Bitmap.Config.ARGB_8888);
+            badge.eraseColor(0xff1dbfd8);
+            scene.setLayerImage(imageLayer,badge,"test-image");
+            scene.setMask(imageLayer,1);
+            int textLayer=scene.addLayer(ReactiveView.TEXT);
+            scene.setLayerText(textLayer,"GPU TEST");
+            scene.setBlend(textLayer,1);
+            File layered=new File(getFilesDir(),"smoke-layered.mp4");
+            try{
+                String layeredReport=Mp4Exporter.export(this,Uri.fromFile(wav),Uri.fromFile(layered),
+                        scene,profile,1000,new AtomicBoolean(false),(p,stage)->{});
+                if(!layeredReport.contains("GPU-only export frames: 30") ||
+                        !layeredReport.contains("media compatibility frames: 0") ||
+                        !layeredReport.contains("GPU sprite/video texture uploads:"))
+                    throw new IllegalStateException("Mixed GPU compositor failed: "+layeredReport);
+                if(!layered.exists()||layered.length()<4096)
+                    throw new IllegalStateException("GPU media compositor output is empty");
+            }finally{layered.delete();scene.closeVideoLayers();}
+            return "H264/AAC + cached GLES compositor + GPU image/text/video layers + portable ZIP: "+
+                    mp4.length()+" bytes; "+stats;
         }finally {wav.delete();mp4.delete();}
     }
     private static void write16(FileOutputStream out,int value) throws IOException {

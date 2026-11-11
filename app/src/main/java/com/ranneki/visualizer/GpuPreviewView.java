@@ -13,7 +13,7 @@ import javax.microedition.khronos.opengles.GL10;
 /** Transparent GLES2 overlay. The CPU View retains images/text/video, while GPU draws all 10 FX. */
 final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Renderer {
     private final ReactiveView scene;
-    private volatile GpuEffectFrame frame=GpuEffectFrame.EMPTY;
+    private volatile GpuSceneFrame frame;
     private volatile boolean available;
     private volatile String rendererName="not initialized";
     private volatile String error="";
@@ -21,6 +21,7 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
     private final AtomicLong points=new AtomicLong();
     private final AtomicLong drawNs=new AtomicLong();
     private GpuParticleRenderer gpu;
+    private GpuSceneRenderer compositor;
     private int width,height;
     GpuPreviewView(Context context,ReactiveView source){
         super(context);this.scene=source;
@@ -32,13 +33,14 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
         setRenderMode(RENDERMODE_WHEN_DIRTY);
         scene.setGpuFrameListener(this::submit);
     }
-    private void submit(GpuEffectFrame next){
+    private void submit(GpuSceneFrame next){
         frame=next;
         if(available)requestRender();
     }
     @Override public void onSurfaceCreated(GL10 gl,EGLConfig config){
         try {
             gpu=new GpuParticleRenderer();
+            compositor=new GpuSceneRenderer();
             rendererName=GLES20.glGetString(GLES20.GL_VENDOR)+" / "+GLES20.glGetString(GLES20.GL_RENDERER);
             available=true;error="";
             new Handler(Looper.getMainLooper()).post(()->scene.setGpuPreviewActive(true));
@@ -54,10 +56,15 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
         GLES20.glViewport(0,0,width,height);
         GLES20.glClearColor(0,0,0,0);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-        if(!available||gpu==null)return;
+        GpuSceneFrame snapshot=frame;
+        if(!available||gpu==null||snapshot==null)return;
         try {
             long started=System.nanoTime();
-            int rendered=gpu.draw(frame,width,height);
+            if(snapshot.fastPath)compositor.begin(snapshot,width,height,false);
+            int rendered=snapshot.fastPath
+                    ?compositor.composite(snapshot,gpu,width,height,false,()->scene.postInvalidate())
+                    :gpu.draw(snapshot.effects,width,height);
+            if(snapshot.fastPath)compositor.spectrum(snapshot,width,height);
             drawNs.addAndGet(System.nanoTime()-started);
             frames.incrementAndGet();points.addAndGet(rendered);
         } catch(RuntimeException e){
@@ -71,6 +78,7 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
                 "\nGPU overlay frames: "+n+" | avg GLES submit: "+
                 (n==0?0:Math.round(drawNs.get()/1e6/n))+" ms | points: "+points.get()+
                 (error.isEmpty()?"":"\nGPU error: "+error)+
+                "\nGPU compositor: "+(compositor==null?"not initialized":compositor.stats())+
                 "\nTiming measures CPU-side GLES submission, not hardware shader execution.";
     }
     void detach(){scene.setGpuFrameListener(null);scene.setGpuPreviewActive(false);}
