@@ -21,7 +21,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -35,317 +34,388 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Native offline Android audio-reactive visualizer editor. */
+/** Native Android audio-reactive editor. The finished application works offline. */
 public class MainActivity extends Activity {
     private static final int PICK_AUDIO=101, PICK_IMAGE=102;
-    private static final int BG=0xff0a0e1d, PANEL=0xff141a30, ACCENT=0xffa999ff;
-    private final String[] effectNames={"Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple"};
-    private final Button[] switches=new Button[4],sources=new Button[4];
-    private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
+    private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
     private final AtomicInteger generation=new AtomicInteger();
     private final Handler ui=new Handler(Looper.getMainLooper());
-    private ReactiveView view;
+    private final String[] effectNames={"Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple"};
+    private final Button[] toggleButtons=new Button[4], mappingButtons=new Button[4];
+    private ReactiveView reactive;
     private MediaPlayer player;
     private Button playButton, ratioButton;
-    private TextView status, timer;
-    private SeekBar progress;
-    private int durationMs;
-    private boolean ready;
-    private SharedPreferences settings;
-    private final ReactiveView.AudioClock clock=new ReactiveView.AudioClock(){
-        @Override public long positionMs(){
-            if(player==null)return 0;
-            try{return player.getCurrentPosition();}catch(Exception e){return 0;}
-        }
-        @Override public boolean playing(){
-            try{return player!=null && player.isPlaying();}catch(Exception e){return false;}
-        }
-    };
-    private final Runnable ticker=new Runnable(){
-        @Override public void run(){
-            if(timer!=null){
-                int position=player==null?0:(int)clock.positionMs();
-                timer.setText(time(position)+" / "+time(durationMs));
-                if(durationMs>0)progress.setProgress((int)(position*1000L/durationMs));
+    private TextView status, timeline;
+    private SeekBar positionBar;
+    private int durationMs=0;
+    private volatile boolean analyzed=false;
+    private SharedPreferences prefs;
+    private final Runnable timeUpdater=new Runnable() {
+        @Override public void run() {
+            if(player!=null) {
+                try {
+                    int current=player.getCurrentPosition();
+                    timeline.setText(format(current)+" / "+format(durationMs));
+                    if(durationMs>0) positionBar.setProgress(Math.round(current*1000f/durationMs));
+                } catch (IllegalStateException ignored) { }
             }
-            ui.postDelayed(this,140);
+            ui.postDelayed(this,130);
         }
     };
-    @Override public void onCreate(Bundle saved){
-        super.onCreate(saved);
+    private final ReactiveView.AudioClock clock=new ReactiveView.AudioClock() {
+        @Override public long positionMs() {
+            if(player==null) return 0;
+            try { return player.getCurrentPosition(); } catch(Exception ignored) { return 0; }
+        }
+        @Override public boolean playing() {
+            try { return player!=null && player.isPlaying(); }
+            catch(Exception ignored) { return false; }
+        }
+    };
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
-        settings=getSharedPreferences("preset",MODE_PRIVATE);
-        view=new ReactiveView(this);
-        view.setClock(clock);
-        readPreset();
-        buildUi();
-        ui.post(ticker);
+        prefs=getSharedPreferences("ranneki-presets",MODE_PRIVATE);
+        makeUi();
+        ui.post(timeUpdater);
     }
-    private void buildUi(){
-        LinearLayout root=column();
+    private void makeUi() {
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
-        root.setPadding(dp(10),dp(7),dp(10),dp(8));
+        root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
-        root.addView(label("RANNEKI  /  VISUALIZER STUDIO",17,ACCENT,true),
-            new LinearLayout.LayoutParams(-1,dp(36)));
-        HorizontalScrollView scrollButtons=new HorizontalScrollView(this);
-        scrollButtons.setHorizontalScrollBarEnabled(false);
-        LinearLayout buttons=row();
-        scrollButtons.addView(buttons);
-        addButton(buttons,"♪ Lagu",v->pick("audio/*",PICK_AUDIO));
-        addButton(buttons,"▣ Background",v->pick("image/*",PICK_IMAGE));
-        playButton=addButton(buttons,"▶ Play",v->togglePlay());
-        ratioButton=addButton(buttons,view.isPortrait()?"9:16":"16:9",v->{
-            view.setPortrait(!view.isPortrait());
-            ratioButton.setText(view.isPortrait()?"9:16":"16:9");
+
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO",17,PURPLE,true);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
+        // Horizontal list keeps import/export controls usable on narrow phones.
+        android.widget.HorizontalScrollView commands=new android.widget.HorizontalScrollView(this);
+        commands.setHorizontalScrollBarEnabled(false);
+        LinearLayout commandsRow=row();
+        commands.addView(commandsRow);
+        addButton(commandsRow,"♪ Lagu",v->choose("audio/*",PICK_AUDIO));
+        addButton(commandsRow,"▣ Background",v->choose("image/*",PICK_IMAGE));
+        playButton=addButton(commandsRow,"▶ Play",v->togglePlay());
+        ratioButton=addButton(commandsRow,"9:16",v->{
+            reactive.setPortrait(!reactive.isPortrait());
+            ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
         });
-        addButton(buttons,"▤ Simpan PNG",v->savePng());
-        addButton(buttons,"✓ Preset",v->savePreset());
-        root.addView(scrollButtons,new LinearLayout.LayoutParams(-1,dp(46)));
-        FrameLayout preview=new FrameLayout(this);
-        preview.setBackgroundColor(0xff030513);
-        preview.addView(view,new FrameLayout.LayoutParams(-1,-1));
-        LinearLayout.LayoutParams previewParams=new LinearLayout.LayoutParams(-1,0,1f);
-        previewParams.topMargin=dp(4);
-        root.addView(preview,previewParams);
-        LinearLayout seekRow=row();
-        seekRow.setGravity(Gravity.CENTER_VERTICAL);
-        timer=label("00:00 / 00:00",11,0xffbac4e5,false);
-        seekRow.addView(timer,new LinearLayout.LayoutParams(dp(101),dp(34)));
-        progress=new SeekBar(this);
-        progress.setMax(1000);
-        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        progress.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar s,int p,boolean fromUser){
-                if(fromUser && player!=null && durationMs>0)
-                    try{player.seekTo((int)(durationMs*p/1000f));}catch(Exception ignored){}
+        addButton(commandsRow,"▤ Simpan PNG",v->saveImage());
+        addButton(commandsRow,"✓ Preset",v->savePreset());
+        root.addView(commands,new LinearLayout.LayoutParams(-1,dp(48)));
+
+        reactive=new ReactiveView(this);
+        reactive.setClock(clock);
+        FrameLayout viewport=new FrameLayout(this);
+        viewport.setBackgroundColor(0xff040612);
+        viewport.addView(reactive,new FrameLayout.LayoutParams(-1,-1));
+        LinearLayout.LayoutParams frameParams=new LinearLayout.LayoutParams(-1,0,1f);
+        frameParams.topMargin=dp(5);
+        root.addView(viewport,frameParams);
+
+        LinearLayout playback=row();
+        playback.setGravity(Gravity.CENTER_VERTICAL);
+        timeline=text("00:00 / 00:00",11,0xffb3bbd7,false);
+        playback.addView(timeline,new LinearLayout.LayoutParams(dp(99),dp(34)));
+        positionBar=new SeekBar(this);
+        positionBar.setMax(1000);
+        positionBar.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        positionBar.setThumbTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        positionBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar,int progress,boolean user) {
+                if(user && player!=null && durationMs>0) {
+                    try { player.seekTo((int)(durationMs*progress/1000f)); }
+                    catch(Exception ignored) { }
+                }
             }
-            @Override public void onStartTrackingTouch(SeekBar s){}
-            @Override public void onStopTrackingTouch(SeekBar s){}
+            public void onStartTrackingTouch(SeekBar bar) { }
+            public void onStopTrackingTouch(SeekBar bar) { }
         });
-        seekRow.addView(progress,new LinearLayout.LayoutParams(0,dp(35),1));
-        root.addView(seekRow,new LinearLayout.LayoutParams(-1,dp(37)));
-        status=label("Pilih lagu untuk membaca kick, bass dan treble.",11,0xffbac4e5,false);
-        root.addView(status,new LinearLayout.LayoutParams(-1,dp(35)));
-        ScrollView settingsScroll=new ScrollView(this);
-        LinearLayout editor=column();
-        editor.setPadding(dp(3),dp(4),dp(3),dp(20));
-        settingsScroll.addView(editor);
-        root.addView(settingsScroll,new LinearLayout.LayoutParams(-1,dp(262)));
-        editor.addView(label("AUDIO REACTIVE  •  CUSTOM FX",13,ACCENT,true));
-        for(int i=0;i<4;i++)addEffectCard(editor,i);
-        TextView info=label("Semua analisis offline. Estimasi kick/snare belum memakai stem AI. V1 menyimpan frame PNG; ekspor MP4 belum tersedia.",11,0xff9ca6c7,false);
-        info.setPadding(0,dp(10),0,dp(8));editor.addView(info);
+        playback.addView(positionBar,new LinearLayout.LayoutParams(0,dp(35),1));
+        root.addView(playback,new LinearLayout.LayoutParams(-1,dp(37)));
+
+        status=text("Impor lagu untuk memulai analisis frekuensi dan kick.",11,0xffb6c0db,false);
+        status.setPadding(dp(4),dp(2),0,dp(2));
+        root.addView(status,new LinearLayout.LayoutParams(-1,dp(34)));
+        ScrollView scroll=new ScrollView(this);
+        scroll.setFillViewport(false);
+        LinearLayout controls=new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setPadding(dp(3),dp(5),dp(3),dp(24));
+        scroll.addView(controls);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,dp(260)));
+        TextView section=text("AUDIO REACTIVE  •  CUSTOM FX",13,PURPLE,true);
+        controls.addView(section);
+        preloadPresetSettings();
+        for(int i=0;i<4;i++) addEffectPanel(controls,i);
+        TextView help=text("Analisis berjalan offline. Kick dideteksi dari perubahan energi bass; bass adalah energi kontinu. Preset disimpan di HP. V1 mengekspor frame PNG, belum video MP4.",11,0xff9ba7c5,false);
+        help.setPadding(0,dp(12),0,dp(5));
+        controls.addView(help);
+        restorePreset();
     }
-    private void addEffectCard(LinearLayout editor,int idx){
-        final int id=idx;
-        LinearLayout card=column();
-        card.setPadding(dp(10),dp(8),dp(10),dp(8));
+
+    private void addEffectPanel(LinearLayout controls,final int effect) {
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(10),dp(10),dp(10),dp(7));
         card.setBackground(rounded(PANEL,12));
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
-        cp.topMargin=dp(9);editor.addView(card,cp);
-        LinearLayout header=row();header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(label(effectNames[id],14,Color.WHITE,true),
-            new LinearLayout.LayoutParams(0,dp(38),1));
-        switches[id]=addButton(header,view.isEnabled(id)?"ON":"OFF",v->{
-            view.setEnabled(id,!view.isEnabled(id));
-            switches[id].setText(view.isEnabled(id)?"ON":"OFF");
+        cp.topMargin=dp(9);
+        controls.addView(card,cp);
+        LinearLayout header=row();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name=text(effectNames[effect],14,Color.WHITE,true);
+        header.addView(name,new LinearLayout.LayoutParams(0,dp(38),1));
+        toggleButtons[effect]=addButton(header,"ON",v->{
+            reactive.setEnabled(effect,!reactive.isEnabled(effect));
+            toggleButtons[effect].setText(reactive.isEnabled(effect)?"ON":"OFF");
         });
-        sources[id]=addButton(header,"→ "+ReactiveView.SOURCES[view.getSource(id)],v->{
-            view.setSource(id,view.getSource(id)+1);
-            sources[id].setText("→ "+ReactiveView.SOURCES[view.getSource(id)]);
+        mappingButtons[effect]=addButton(header,"→ Kick + Bass",v->{
+            reactive.setSource(effect,reactive.getSource(effect)+1);
+            mappingButtons[effect].setText("→ "+ReactiveView.SOURCES[reactive.getSource(effect)]);
         });
         card.addView(header);
-        addSlider(card,"Ukuran",view.getSize(id),value->view.setSize(id,value));
-        addSlider(card,"Jumlah / Density",view.getDensity(id),value->view.setDensity(id,value));
-        addSlider(card,"Reaktivitas",view.getStrength(id),value->view.setStrength(id,value));
+        addSlider(card,"Ukuran",reactive.getSize(effect),value->reactive.setSize(effect,value));
+        addSlider(card,"Jumlah / Density",reactive.getDensity(effect),value->reactive.setDensity(effect,value));
+        addSlider(card,"Reaktivitas",reactive.getStrength(effect),value->reactive.setStrength(effect,value));
     }
-    private interface ValueChange{void change(int v);}
-    private void addSlider(LinearLayout parent,String title,int initial,ValueChange handler){
-        LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);
-        line.addView(label(title,11,0xffc0c9e6,false),
-            new LinearLayout.LayoutParams(dp(120),dp(33)));
-        SeekBar seek=new SeekBar(this);seek.setMax(100);seek.setProgress(initial);
-        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+    private interface OnValue { void set(int value); }
+    private void addSlider(LinearLayout parent,String label,int initial,OnValue callback) {
+        LinearLayout line=row();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=text(label,11,0xffb8c2dd,false);
+        line.addView(title,new LinearLayout.LayoutParams(dp(116),dp(31)));
+        SeekBar seek=new SeekBar(this);
+        seek.setMax(100);
+        seek.setProgress(initial);
+        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(PURPLE));
         line.addView(seek,new LinearLayout.LayoutParams(0,dp(34),1));
-        TextView count=label(Integer.toString(initial),11,Color.WHITE,false);
-        count.setGravity(Gravity.CENTER);
-        line.addView(count,new LinearLayout.LayoutParams(dp(30),dp(33)));
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar b,int n,boolean fromUser){
-                handler.change(n);count.setText(Integer.toString(n));
+        TextView number=text(String.valueOf(initial),11,Color.WHITE,false);
+        number.setGravity(Gravity.CENTER);
+        line.addView(number,new LinearLayout.LayoutParams(dp(28),dp(30)));
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb,int value,boolean user) {
+                callback.set(value);
+                number.setText(String.valueOf(value));
             }
-            @Override public void onStartTrackingTouch(SeekBar b){}
-            @Override public void onStopTrackingTouch(SeekBar b){}
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
         parent.addView(line);
     }
-    private void pick(String type,int request){
+    private void choose(String mime,int request) {
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType(type);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mime);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent,request);
     }
-    @Override protected void onActivityResult(int req,int result,Intent data){
-        super.onActivityResult(req,result,data);
-        if(result!=RESULT_OK || data==null || data.getData()==null)return;
+    @Override protected void onActivityResult(int request,int result,Intent data) {
+        super.onActivityResult(request,result,data);
+        if(result!=RESULT_OK || data==null || data.getData()==null) return;
         Uri uri=data.getData();
-        try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
-        catch(Exception ignored){}
-        if(req==PICK_AUDIO)loadAudio(uri);
-        else if(req==PICK_IMAGE)loadBackground(uri);
+        try {
+            getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch(Exception ignored) { }
+        if(request==PICK_AUDIO) loadAudio(uri);
+        else if(request==PICK_IMAGE) loadImage(uri);
     }
-    private void loadAudio(Uri uri){
+    private void loadAudio(Uri uri) {
         final int version=generation.incrementAndGet();
-        ready=false;durationMs=0;
-        if(player!=null){player.release();player=null;}
-        view.setTrack(null);playButton.setText("▶ Play");
-        try{
+        analyzed=false;
+        if(player!=null) { player.release();player=null; }
+        reactive.setTrack(null);
+        playButton.setText("▶ Play");
+        durationMs=0;
+        try {
             MediaPlayer next=new MediaPlayer();
-            next.setDataSource(this,uri);next.prepare();
-            next.setOnCompletionListener(p->{playButton.setText("▶ Play");view.invalidate();});
-            player=next;durationMs=next.getDuration();
-        }catch(Exception e){
-            status.setText("Gagal membuka lagu: "+e.getMessage());
-            if(player!=null){player.release();player=null;}return;
+            next.setDataSource(this,uri);
+            next.prepare();
+            next.setOnCompletionListener(mp->{playButton.setText("▶ Play");reactive.invalidate();});
+            player=next;
+            durationMs=player.getDuration();
+        } catch(Exception e) {
+            status.setText("Audio gagal dibuka: "+e.getMessage());
+            if(player!=null) {player.release();player=null;}
+            return;
         }
-        status.setText("Analisis musik: bass / kick / snare / treble…");
-        worker.execute(()->{
-            try{
-                AudioAnalyzer.Track analysis=AudioAnalyzer.analyze(getApplicationContext(),uri);
+        status.setText("Menganalisis kick, bass, mid, dan treble…");
+        analysisWorker.execute(()->{
+            try {
+                AudioAnalyzer.Track result=AudioAnalyzer.analyze(getApplicationContext(),uri);
                 runOnUiThread(()->{
-                    if(version!=generation.get() || isFinishing() || isDestroyed())return;
-                    ready=true;view.setTrack(analysis);
-                    status.setText("Siap! Tekan Play dan atur layer reaktif.");
+                    if(version!=generation.get() || isFinishing() || isDestroyed()) return;
+                    reactive.setTrack(result);
+                    analyzed=true;
+                    status.setText("Siap! Efek mengikuti musik. Pilih sumber di tiap layer.");
+                    Toast.makeText(this,"Analisis audio selesai",Toast.LENGTH_SHORT).show();
                 });
-            }catch(Exception e){
+            } catch(Exception e) {
                 runOnUiThread(()->{
-                    if(version!=generation.get() || isFinishing() || isDestroyed())return;
+                    if(version!=generation.get() || isFinishing() || isDestroyed()) return;
                     status.setText("Analisis gagal: "+e.getMessage());
                 });
             }
         });
     }
-    private void loadBackground(Uri uri){
-        try{
+    private void loadImage(Uri uri) {
+        try {
             BitmapFactory.Options bounds=new BitmapFactory.Options();
             bounds.inJustDecodeBounds=true;
-            try(InputStream in=getContentResolver().openInputStream(uri)){
+            try(InputStream in=getContentResolver().openInputStream(uri)) {
                 BitmapFactory.decodeStream(in,null,bounds);
             }
-            int scale=1;
-            while(bounds.outWidth/scale>2048 || bounds.outHeight/scale>2048)scale*=2;
-            BitmapFactory.Options opt=new BitmapFactory.Options();opt.inSampleSize=scale;
-            Bitmap image;
-            try(InputStream in=getContentResolver().openInputStream(uri)){
-                image=BitmapFactory.decodeStream(in,null,opt);
+            int sample=1;
+            while(bounds.outWidth/sample>2048 || bounds.outHeight/sample>2048) sample*=2;
+            BitmapFactory.Options options=new BitmapFactory.Options();
+            options.inSampleSize=sample;
+            Bitmap bitmap;
+            try(InputStream in=getContentResolver().openInputStream(uri)) {
+                bitmap=BitmapFactory.decodeStream(in,null,options);
             }
-            if(image==null)throw new IllegalArgumentException("Gambar tidak terbaca");
-            view.setBackdrop(image);status.setText("Background berhasil dipasang.");
-        }catch(Exception e){status.setText("Gagal membuka gambar: "+e.getMessage());}
-    }
-    private void togglePlay(){
-        if(player==null){toast("Impor lagu dulu");return;}
-        if(!ready){toast("Analisis lagu belum selesai");return;}
-        try{
-            if(player.isPlaying()){player.pause();playButton.setText("▶ Play");}
-            else{player.start();playButton.setText("Ⅱ Pause");}
-            view.invalidate();
-        }catch(Exception e){status.setText("Playback gagal: "+e.getMessage());}
-    }
-    private void readPreset(){
-        view.setPortrait(settings.getBoolean("portrait",true));
-        int[] mapping={2,1,4,0};
-        for(int i=0;i<4;i++){
-            view.setEnabled(i,settings.getBoolean("enabled"+i,true));
-            view.setSource(i,settings.getInt("source"+i,mapping[i]));
-            view.setSize(i,settings.getInt("size"+i,55));
-            view.setDensity(i,settings.getInt("density"+i,60));
-            view.setStrength(i,settings.getInt("strength"+i,80));
+            if(bitmap==null) throw new IllegalArgumentException("Gambar tidak terbaca");
+            reactive.setBackdrop(bitmap);
+            status.setText("Background terpasang. Atur mapping efek sesuai musik.");
+        } catch(Exception e) {
+            status.setText("Gambar gagal dibuka: "+e.getMessage());
         }
     }
-    private void savePreset(){
-        SharedPreferences.Editor edit=settings.edit();
-        edit.putBoolean("portrait",view.isPortrait());
-        for(int i=0;i<4;i++){
-            edit.putBoolean("enabled"+i,view.isEnabled(i));
-            edit.putInt("source"+i,view.getSource(i));
-            edit.putInt("size"+i,view.getSize(i));
-            edit.putInt("density"+i,view.getDensity(i));
-            edit.putInt("strength"+i,view.getStrength(i));
-        }
-        edit.apply();toast("Preset tersimpan di HP");
+    private void togglePlay() {
+        if(player==null) { Toast.makeText(this,"Impor lagu dulu",Toast.LENGTH_SHORT).show();return; }
+        if(!analyzed) { Toast.makeText(this,"Tunggu analisis audio selesai",Toast.LENGTH_SHORT).show();return; }
+        try {
+            if(player.isPlaying()) { player.pause();playButton.setText("▶ Play"); }
+            else {player.start();playButton.setText("Ⅱ Pause");}
+            reactive.invalidate();
+        } catch(Exception e) {status.setText("Playback gagal: "+e.getMessage());}
     }
-    private void savePng(){
-        Bitmap bitmap=null;
-        try{
-            int w=view.isPortrait()?720:1280,h=view.isPortrait()?1280:720;
-            bitmap=view.snapshot(w,h);
+    private void savePreset() {
+        SharedPreferences.Editor ed=prefs.edit();
+        ed.putBoolean("portrait",reactive.isPortrait());
+        for(int i=0;i<4;i++) {
+            ed.putBoolean("on"+i,reactive.isEnabled(i));
+            ed.putInt("source"+i,reactive.getSource(i));
+            ed.putInt("size"+i,reactive.getSize(i));
+            ed.putInt("density"+i,reactive.getDensity(i));
+            ed.putInt("strength"+i,reactive.getStrength(i));
+        }
+        ed.apply();
+        Toast.makeText(this,"Preset tersimpan di HP",Toast.LENGTH_SHORT).show();
+    }
+    private void preloadPresetSettings() {
+        reactive.setPortrait(prefs.getBoolean("portrait",true));
+        for(int i=0;i<4;i++) {
+            reactive.setEnabled(i,prefs.getBoolean("on"+i,true));
+            reactive.setSource(i,prefs.getInt("source"+i,new int[]{2,1,4,0}[i]));
+            reactive.setSize(i,prefs.getInt("size"+i,55));
+            reactive.setDensity(i,prefs.getInt("density"+i,60));
+            reactive.setStrength(i,prefs.getInt("strength"+i,80));
+        }
+    }
+    private void restorePreset() {
+        reactive.setPortrait(prefs.getBoolean("portrait",true));
+        ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
+        for(int i=0;i<4;i++) {
+            reactive.setEnabled(i,prefs.getBoolean("on"+i,true));
+            reactive.setSource(i,prefs.getInt("source"+i,new int[]{2,1,4,0}[i]));
+            reactive.setSize(i,prefs.getInt("size"+i,55));
+            reactive.setDensity(i,prefs.getInt("density"+i,60));
+            reactive.setStrength(i,prefs.getInt("strength"+i,80));
+            toggleButtons[i].setText(reactive.isEnabled(i)?"ON":"OFF");
+            mappingButtons[i].setText("→ "+ReactiveView.SOURCES[reactive.getSource(i)]);
+        }
+        // Sliders were built from loaded values by preloadPresetSettings().
+    }
+    private void saveImage() {
+        try {
+            int w=reactive.isPortrait()?720:1280;
+            int h=reactive.isPortrait()?1280:720;
+            Bitmap bitmap=reactive.snapshot(w,h);
             String name="Ranneki_"+System.currentTimeMillis()+".png";
-            if(Build.VERSION.SDK_INT>=29){
+            if(Build.VERSION.SDK_INT>=29) {
                 ContentValues values=new ContentValues();
                 values.put(MediaStore.Images.Media.DISPLAY_NAME,name);
                 values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");
                 values.put(MediaStore.Images.Media.RELATIVE_PATH,Environment.DIRECTORY_PICTURES+"/RannekiStudio");
-                Uri dst=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
-                if(dst==null)throw new IllegalStateException("Galeri tidak tersedia");
-                try(OutputStream out=getContentResolver().openOutputStream(dst)){
+                Uri file=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+                if(file==null) throw new IllegalStateException("Galeri tidak tersedia");
+                try(OutputStream out=getContentResolver().openOutputStream(file)) {
                     if(out==null || !bitmap.compress(Bitmap.CompressFormat.PNG,100,out))
-                        throw new IllegalStateException("Gagal menulis PNG");
+                        throw new IllegalStateException("Gagal menyimpan PNG");
                 }
-            }else{
+            } else {
                 File folder=new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES),"RannekiStudio");
-                if(!folder.exists() && !folder.mkdirs())throw new IllegalStateException("Gagal membuat folder");
-                try(OutputStream out=new FileOutputStream(new File(folder,name))){
+                if(!folder.exists() && !folder.mkdirs()) throw new IllegalStateException("Folder gagal dibuat");
+                try(OutputStream out=new FileOutputStream(new File(folder,name))) {
                     bitmap.compress(Bitmap.CompressFormat.PNG,100,out);
                 }
             }
-            toast("Frame PNG berhasil disimpan");
-        }catch(Exception e){status.setText("Gagal simpan PNG: "+e.getMessage());}
-        finally{if(bitmap!=null && !bitmap.isRecycled())bitmap.recycle();}
+            bitmap.recycle();
+            Toast.makeText(this,"Frame PNG disimpan: "+name,Toast.LENGTH_LONG).show();
+        } catch(Exception e) {
+            status.setText("Gagal menyimpan PNG: "+e.getMessage());
+        }
     }
-    private static String time(int ms){
-        int s=Math.max(0,ms/1000);
-        return String.format(java.util.Locale.US,"%02d:%02d",s/60,s%60);
+    private static String format(int ms) {
+        int seconds=Math.max(0,ms/1000);
+        return String.format(java.util.Locale.US,"%02d:%02d",seconds/60,seconds%60);
     }
-    private LinearLayout column(){
-        LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;
+    private TextView text(String str,int sp,int color,boolean bold) {
+        TextView v=new TextView(this);
+        v.setText(str);v.setTextSize(sp);v.setTextColor(color);
+        v.setGravity(Gravity.CENTER_VERTICAL);
+        if(bold) v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        return v;
     }
-    private LinearLayout row(){
-        LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);return l;
+    private LinearLayout row() {
+        LinearLayout layout=new LinearLayout(this);
+        layout.setOrientation(LinearLayout.HORIZONTAL);
+        return layout;
     }
-    private TextView label(String text,int sp,int color,boolean bold){
-        TextView t=new TextView(this);t.setText(text);t.setTextSize(sp);t.setTextColor(color);
-        t.setGravity(Gravity.CENTER_VERTICAL);
-        if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        return t;
-    }
-    private Button addButton(LinearLayout row,String text,View.OnClickListener listener){
+    private interface Click { void go(View view); }
+    private Button addButton(LinearLayout root,String title,Click click) {
         Button b=new Button(this);
-        b.setAllCaps(false);b.setText(text);b.setTextSize(11);b.setTextColor(Color.WHITE);
-        b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);
-        b.setPadding(dp(8),0,dp(8),0);b.setBackground(rounded(0xff252c48,9));
+        b.setText(title);
+        b.setAllCaps(false);
+        b.setTextSize(11);
+        b.setTextColor(Color.WHITE);
+        b.setPadding(dp(8),0,dp(8),0);
+        b.setMinimumWidth(0);
+        b.setMinWidth(0);
+        b.setMinimumHeight(0);
+        b.setMinHeight(0);
+        b.setBackground(rounded(0xff252c48,9));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(34));
         lp.setMargins(dp(2),0,dp(3),0);
-        row.addView(b,lp);b.setOnClickListener(listener);return b;
+        root.addView(b,lp);
+        b.setOnClickListener(click::go);
+        return b;
     }
-    private GradientDrawable rounded(int color,int radius){
-        GradientDrawable d=new GradientDrawable();d.setColor(color);
-        d.setCornerRadius(dp(radius));d.setStroke(dp(1),0xff303953);return d;
+    private GradientDrawable rounded(int color,int radius) {
+        GradientDrawable d=new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(dp(radius));
+        d.setStroke(dp(1),0xff303953);
+        return d;
     }
-    private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density+.5f);}
-    private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
-    @Override protected void onPause(){
+    private int dp(float value) {return (int)(value*getResources().getDisplayMetrics().density+.5f);}
+    @Override protected void onPause() {
         super.onPause();
-        try{if(player!=null)player.pause();}catch(Exception ignored){}
-        if(playButton!=null)playButton.setText("▶ Play");
+        if(player!=null) {
+            try {player.pause();} catch(Exception ignored) { }
+        }
+        if(playButton!=null) playButton.setText("▶ Play");
     }
-    @Override protected void onDestroy(){
-        generation.incrementAndGet();ui.removeCallbacks(ticker);worker.shutdownNow();
-        if(player!=null){player.release();player=null;}
+    @Override protected void onDestroy() {
+        generation.incrementAndGet();
+        ui.removeCallbacks(timeUpdater);
+        analysisWorker.shutdownNow();
+        if(player!=null) {player.release();player=null;}
         super.onDestroy();
     }
 }

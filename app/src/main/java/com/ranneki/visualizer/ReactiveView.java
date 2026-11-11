@@ -208,6 +208,7 @@ public final class ReactiveView extends View {
     private void drawFire(Canvas c,int h,float dt,float power,float volume,float density) {
         float intensity=level(FIRE)*power;
         int count=Math.round(particles[1].length*density);
+        // Procedural flame tongues, height directly controlled by the chosen audio source.
         for(int i=0;i<12;i++) {
             float x=(i+.5f)*400/12f;
             float flame=(10f+28f*intensity)*(0.7f+((i*17)%9)/18f)*volume;

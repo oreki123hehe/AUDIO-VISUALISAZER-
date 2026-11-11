@@ -1,12 +1,20 @@
 package com.ranneki.visualizer;
-public final class SmokeTest {
-  public static void main(String[] args) {
-    float[] r=new float[1024],i=new float[1024];
-    for(int k=0;k<r.length;k++)r[k]=(float)Math.sin(2*Math.PI*16*k/r.length);
-    Fft.forward(r,i);
-    int best=0;double magnitude=0;
-    for(int k=1;k<512;k++){double p=r[k]*r[k]+i[k]*i[k];if(p>magnitude){magnitude=p;best=k;}}
-    if(best!=16)throw new AssertionError("FFT peak expected 16, got "+best);
-    System.out.println("FFT smoke test passed");
-  }
+
+/** Pure-Java smoke test: check frequency bin and FFT amplitude. */
+public class SmokeTest {
+    public static void main(String[] args) {
+        int n=1024, signalBin=16;
+        float[] re=new float[n], im=new float[n];
+        for (int i=0;i<n;i++) re[i]=(float)Math.sin(2*Math.PI*signalBin*i/n);
+        Fft.forward(re,im);
+        int maxBin=0;
+        double max=0;
+        for(int k=1;k<n/2;k++) {
+            double amplitude=Math.hypot(re[k],im[k]);
+            if(amplitude>max) {max=amplitude;maxBin=k;}
+        }
+        if(maxBin!=signalBin || max<500)
+            throw new AssertionError("FFT frequency peak mismatch: bin="+maxBin+" amplitude="+max);
+        System.out.println("PASS: FFT dominant bin = "+maxBin+", amplitude = "+max);
+    }
 }
