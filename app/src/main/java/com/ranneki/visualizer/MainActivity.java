@@ -32,6 +32,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Native Android audio-reactive editor. The finished application works offline. */
@@ -40,9 +41,12 @@ public class MainActivity extends Activity {
     private static final int BG=0xff0a0e1d, PANEL=0xff141a30, PURPLE=0xffa999ff;
     private final ExecutorService analysisWorker=Executors.newSingleThreadExecutor();
     private final AtomicInteger generation=new AtomicInteger();
+    private Future<?> analysisTask;
     private final Handler ui=new Handler(Looper.getMainLooper());
-    private final String[] effectNames={"Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple"};
-    private final Button[] toggleButtons=new Button[4], mappingButtons=new Button[4];
+    private final Button[] toggleButtons=new Button[ReactiveView.EFFECT_COUNT],
+            mappingButtons=new Button[ReactiveView.EFFECT_COUNT];
+    private final LinearLayout[] panels=new LinearLayout[ReactiveView.EFFECT_COUNT];
+    private LinearLayout effectContainer;
     private ReactiveView reactive;
     private MediaPlayer player;
     private Button playButton, ratioButton;
@@ -89,7 +93,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(10),dp(8),dp(10),dp(7));
         setContentView(root);
 
-        TextView title=text("RANNEKI  /  VISUALIZER STUDIO",17,PURPLE,true);
+        TextView title=text("RANNEKI  /  VISUALIZER STUDIO  1.2",17,PURPLE,true);
         title.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(title,new LinearLayout.LayoutParams(-1,dp(37)));
         // Horizontal list keeps import/export controls usable on narrow phones.
@@ -150,9 +154,25 @@ public class MainActivity extends Activity {
         root.addView(scroll,new LinearLayout.LayoutParams(-1,dp(260)));
         TextView section=text("AUDIO REACTIVE  •  CUSTOM FX",13,PURPLE,true);
         controls.addView(section);
+        effectContainer=controls;
         preloadPresetSettings();
-        for(int i=0;i<4;i++) addEffectPanel(controls,i);
-        TextView help=text("Analisis berjalan offline. Kick dideteksi dari perubahan energi bass; bass adalah energi kontinu. Preset disimpan di HP. V1 mengekspor frame PNG, belum video MP4.",11,0xff9ba7c5,false);
+        LinearLayout spectrumControls=row();
+        Button eco=addButton(spectrumControls,reactive.isEconomyMode()?"⚡ ECO 30 FPS":"⚡ QUALITY 60 FPS",v->{});
+        eco.setOnClickListener(v->{
+            reactive.setEconomyMode(!reactive.isEconomyMode());
+            eco.setText(reactive.isEconomyMode()?"⚡ ECO 30 FPS":"⚡ QUALITY 60 FPS");
+        });
+        Button spectrum=addButton(spectrumControls,reactive.isSpectrumEnabled()?"◉ Spectrum ON":"○ Spectrum OFF",v->{});
+        spectrum.setOnClickListener(v->{
+            reactive.setSpectrumEnabled(!reactive.isSpectrumEnabled());
+            spectrum.setText(reactive.isSpectrumEnabled()?"◉ Spectrum ON":"○ Spectrum OFF");
+        });
+        controls.addView(spectrumControls);
+        addSlider(controls,"Ukuran Spectrum",reactive.getSpectrumScale(),value->reactive.setSpectrumScale(value));
+        addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
+        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) addEffectPanel(controls,i);
+        reorderPanels();
+        TextView help=text("Semua FX memakai peta audio sendiri. Pilih Frekuensi custom lalu set Hz min/max di menu Lanjutan. Kick dan snare masih perkiraan onset, bukan stem AI. V1.2 menyimpan PNG, belum ekspor MP4.",11,0xff9ba7c5,false);
         help.setPadding(0,dp(12),0,dp(5));
         controls.addView(help);
         restorePreset();
@@ -160,28 +180,102 @@ public class MainActivity extends Activity {
 
     private void addEffectPanel(LinearLayout controls,final int effect) {
         LinearLayout card=new LinearLayout(this);
+        panels[effect]=card;
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(10),dp(10),dp(10),dp(7));
+        card.setPadding(dp(10),dp(8),dp(10),dp(7));
         card.setBackground(rounded(PANEL,12));
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
         cp.topMargin=dp(9);
         controls.addView(card,cp);
         LinearLayout header=row();
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name=text(effectNames[effect],14,Color.WHITE,true);
+        TextView name=text(ReactiveView.EFFECT_NAMES[effect],14,Color.WHITE,true);
         header.addView(name,new LinearLayout.LayoutParams(0,dp(38),1));
-        toggleButtons[effect]=addButton(header,"ON",v->{
+        toggleButtons[effect]=addButton(header,reactive.isEnabled(effect)?"ON":"OFF",v->{
             reactive.setEnabled(effect,!reactive.isEnabled(effect));
             toggleButtons[effect].setText(reactive.isEnabled(effect)?"ON":"OFF");
         });
-        mappingButtons[effect]=addButton(header,"→ Kick + Bass",v->{
+        card.addView(header);
+        LinearLayout sourceLine=row();
+        mappingButtons[effect]=addButton(sourceLine,"→ "+ReactiveView.SOURCES[reactive.getSource(effect)],v->{
             reactive.setSource(effect,reactive.getSource(effect)+1);
             mappingButtons[effect].setText("→ "+ReactiveView.SOURCES[reactive.getSource(effect)]);
         });
-        card.addView(header);
+        addButton(sourceLine,"↑",v->moveCard(effect,-1));
+        addButton(sourceLine,"↓",v->moveCard(effect,1));
+        card.addView(sourceLine);
         addSlider(card,"Ukuran",reactive.getSize(effect),value->reactive.setSize(effect,value));
-        addSlider(card,"Jumlah / Density",reactive.getDensity(effect),value->reactive.setDensity(effect,value));
+        addSlider(card,"Jumlah",reactive.getDensity(effect),value->reactive.setDensity(effect,value));
         addSlider(card,"Reaktivitas",reactive.getStrength(effect),value->reactive.setStrength(effect,value));
+        LinearLayout advanced=new LinearLayout(this);
+        advanced.setOrientation(LinearLayout.VERTICAL);
+        advanced.setVisibility(View.GONE);
+        Button reveal=addButton(card,"⚙ Lanjutan +",v->{});
+        reveal.setOnClickListener(v->{
+            boolean show=advanced.getVisibility()!=View.VISIBLE;
+            advanced.setVisibility(show?View.VISIBLE:View.GONE);
+            reveal.setText(show?"⚙ Lanjutan −":"⚙ Lanjutan +");
+        });
+        card.addView(advanced);
+        addSlider(advanced,"Opacity",reactive.getOpacity(effect),value->reactive.setOpacity(effect,value));
+        addSlider(advanced,"Kecepatan",reactive.getVelocity(effect),value->reactive.setVelocity(effect,value));
+        addSlider(advanced,"Threshold",reactive.getThreshold(effect),value->reactive.setThreshold(effect,value));
+        addSlider(advanced,"Attack ms /10",reactive.getAttack(effect)/10,value->reactive.setAttack(effect,value*10));
+        addSlider(advanced,"Release ms /15",reactive.getRelease(effect)/15,value->reactive.setRelease(effect,value*15));
+        addFrequencySlider(advanced,"Min Hz",reactive.getMinHz(effect),value->{
+            reactive.setFrequency(effect,value,Math.max(value,reactive.getMaxHz(effect)));
+        });
+        addFrequencySlider(advanced,"Max Hz",reactive.getMaxHz(effect),value->{
+            reactive.setFrequency(effect,Math.min(value,reactive.getMinHz(effect)),value);
+        });
+    }
+    private void moveCard(int effect,int delta) {
+        if(reactive.moveLayer(effect,delta)) reorderPanels();
+    }
+    private void reorderPanels() {
+        if(effectContainer==null) return;
+        for(LinearLayout card:panels) if(card!=null && card.getParent()==effectContainer)
+            effectContainer.removeView(card);
+        // Section heading, spectrum toggle, and two global sliders stay above FX cards.
+        int index=4;
+        for(int effect:reactive.getLayerOrder()) {
+            LinearLayout card=panels[effect];
+            if(card!=null) {
+                LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                cp.topMargin=dp(9);
+                effectContainer.addView(card,index++,cp);
+            }
+        }
+    }
+    private static int progressToHz(int progress) {
+        return (int)Math.round(25*Math.pow(400,Math.max(0,Math.min(100,progress))/100.0));
+    }
+    private static int hzToProgress(int hz) {
+        return (int)Math.round(100*Math.log(Math.max(25,hz)/25.0)/Math.log(400));
+    }
+    private void addFrequencySlider(LinearLayout parent,String label,int initial,OnValue callback) {
+        LinearLayout line=row();line.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=text(label,11,0xffb8c2dd,false);
+        line.addView(title,new LinearLayout.LayoutParams(dp(116),dp(31)));
+        SeekBar seek=new SeekBar(this);
+        seek.setMax(100);seek.setProgress(hzToProgress(initial));
+        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        line.addView(seek,new LinearLayout.LayoutParams(0,dp(34),1));
+        TextView number=text(initial+" Hz",10,Color.WHITE,false);
+        number.setGravity(Gravity.CENTER);
+        line.addView(number,new LinearLayout.LayoutParams(dp(68),dp(30)));
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean user) {
+                if(user) {
+                    int hz=progressToHz(progress);
+                    callback.set(hz);number.setText(hz+" Hz");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) { }
+            @Override public void onStopTrackingTouch(SeekBar bar) { }
+        });
+        parent.addView(line);
     }
     private interface OnValue { void set(int value); }
     private void addSlider(LinearLayout parent,String label,int initial,OnValue callback) {
@@ -227,6 +321,7 @@ public class MainActivity extends Activity {
     }
     private void loadAudio(Uri uri) {
         final int version=generation.incrementAndGet();
+        if(analysisTask!=null) analysisTask.cancel(true);
         analyzed=false;
         if(player!=null) { player.release();player=null; }
         reactive.setTrack(null);
@@ -245,7 +340,7 @@ public class MainActivity extends Activity {
             return;
         }
         status.setText("Menganalisis kick, bass, mid, dan treble…");
-        analysisWorker.execute(()->{
+        analysisTask=analysisWorker.submit(()->{
             try {
                 AudioAnalyzer.Track result=AudioAnalyzer.analyze(getApplicationContext(),uri);
                 runOnUiThread(()->{
@@ -297,39 +392,68 @@ public class MainActivity extends Activity {
     private void savePreset() {
         SharedPreferences.Editor ed=prefs.edit();
         ed.putBoolean("portrait",reactive.isPortrait());
-        for(int i=0;i<4;i++) {
+        ed.putBoolean("economyMode",reactive.isEconomyMode());
+        ed.putBoolean("spectrumEnabled",reactive.isSpectrumEnabled());
+        ed.putInt("spectrumScale",reactive.getSpectrumScale());
+        ed.putInt("cameraShake",reactive.getCameraShake());
+        StringBuilder orderText=new StringBuilder();
+        for(int index:reactive.getLayerOrder()) {
+            if(orderText.length()>0) orderText.append(',');
+            orderText.append(index);
+        }
+        ed.putString("layerOrder",orderText.toString());
+        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
             ed.putBoolean("on"+i,reactive.isEnabled(i));
             ed.putInt("source"+i,reactive.getSource(i));
             ed.putInt("size"+i,reactive.getSize(i));
             ed.putInt("density"+i,reactive.getDensity(i));
             ed.putInt("strength"+i,reactive.getStrength(i));
+            ed.putInt("opacity"+i,reactive.getOpacity(i));
+            ed.putInt("velocity"+i,reactive.getVelocity(i));
+            ed.putInt("threshold"+i,reactive.getThreshold(i));
+            ed.putInt("attack"+i,reactive.getAttack(i));
+            ed.putInt("release"+i,reactive.getRelease(i));
+            ed.putInt("minHz"+i,reactive.getMinHz(i));
+            ed.putInt("maxHz"+i,reactive.getMaxHz(i));
         }
         ed.apply();
         Toast.makeText(this,"Preset tersimpan di HP",Toast.LENGTH_SHORT).show();
     }
     private void preloadPresetSettings() {
         reactive.setPortrait(prefs.getBoolean("portrait",true));
-        for(int i=0;i<4;i++) {
-            reactive.setEnabled(i,prefs.getBoolean("on"+i,true));
-            reactive.setSource(i,prefs.getInt("source"+i,new int[]{2,1,4,0}[i]));
+        reactive.setEconomyMode(prefs.getBoolean("economyMode",true));
+        reactive.setSpectrumEnabled(prefs.getBoolean("spectrumEnabled",true));
+        reactive.setSpectrumScale(prefs.getInt("spectrumScale",55));
+        reactive.setCameraShake(prefs.getInt("cameraShake",0));
+        int[] initialSources={2,1,4,0,1,3,0,4,2,0};
+        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
+            reactive.setEnabled(i,prefs.getBoolean("on"+i,i<4));
+            reactive.setSource(i,prefs.getInt("source"+i,initialSources[i]));
             reactive.setSize(i,prefs.getInt("size"+i,55));
             reactive.setDensity(i,prefs.getInt("density"+i,60));
             reactive.setStrength(i,prefs.getInt("strength"+i,80));
+            reactive.setOpacity(i,prefs.getInt("opacity"+i,75));
+            reactive.setVelocity(i,prefs.getInt("velocity"+i,50));
+            reactive.setThreshold(i,prefs.getInt("threshold"+i,15));
+            reactive.setAttack(i,prefs.getInt("attack"+i,18));
+            reactive.setRelease(i,prefs.getInt("release"+i,165));
+            reactive.setFrequency(i,prefs.getInt("minHz"+i,35),prefs.getInt("maxHz"+i,150));
+        }
+        String[] encoded=prefs.getString("layerOrder","").split(",");
+        if(encoded.length==ReactiveView.EFFECT_COUNT) {
+            try {
+                int[] indices=new int[encoded.length];
+                for(int i=0;i<indices.length;i++) indices[i]=Integer.parseInt(encoded[i]);
+                reactive.setLayerOrder(indices);
+            } catch(NumberFormatException ignored) { }
         }
     }
     private void restorePreset() {
-        reactive.setPortrait(prefs.getBoolean("portrait",true));
         ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
-        for(int i=0;i<4;i++) {
-            reactive.setEnabled(i,prefs.getBoolean("on"+i,true));
-            reactive.setSource(i,prefs.getInt("source"+i,new int[]{2,1,4,0}[i]));
-            reactive.setSize(i,prefs.getInt("size"+i,55));
-            reactive.setDensity(i,prefs.getInt("density"+i,60));
-            reactive.setStrength(i,prefs.getInt("strength"+i,80));
+        for(int i=0;i<ReactiveView.EFFECT_COUNT;i++) {
             toggleButtons[i].setText(reactive.isEnabled(i)?"ON":"OFF");
             mappingButtons[i].setText("→ "+ReactiveView.SOURCES[reactive.getSource(i)]);
         }
-        // Sliders were built from loaded values by preloadPresetSettings().
     }
     private void saveImage() {
         try {
@@ -414,6 +538,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         generation.incrementAndGet();
         ui.removeCallbacks(timeUpdater);
+        if(analysisTask!=null) analysisTask.cancel(true);
         analysisWorker.shutdownNow();
         if(player!=null) {player.release();player=null;}
         super.onDestroy();

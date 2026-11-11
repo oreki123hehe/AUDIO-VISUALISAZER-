@@ -14,9 +14,9 @@ import java.util.List;
 
 /** Offline, on-device audio analysis. No microphone, Internet, or server required. */
 public final class AudioAnalyzer {
-    private static final int N = 1024;
-    private static final int HOP = 256;
-    private static final int DECIMATE = 4;
+    private static final int N = 2048;
+    private static final int HOP = 512;
+    private static final int DECIMATE = 2;
 
     public static final class Features {
         public final float bass, mids, highs, kick, snare;
@@ -29,26 +29,56 @@ public final class AudioAnalyzer {
     private static final class Raw {
         final long ms;
         final float low, mid, high;
-        Raw(long ms, float low, float mid, float high) {
+        final float[] bands;
+        Raw(long ms, float low, float mid, float high, float[] bands) {
             this.ms=ms; this.low=low; this.mid=mid; this.high=high;
+            this.bands=bands;
         }
     }
     public static final class Track {
         private final long[] timestamps;
         private final Features[] features;
-        private Track(long[] timestamps, Features[] features) {
-            this.timestamps=timestamps; this.features=features;
+        private final float[][] spectrum;
+        private Track(long[] timestamps, Features[] features, float[][] spectrum) {
+            this.timestamps=timestamps; this.features=features; this.spectrum=spectrum;
+        }
+        /** 25–10,000 Hz effective range, limited by each file's sampling frequency. */
+        public float bandAt(long ms, float minHz, float maxHz) {
+            if (spectrum.length == 0) return 0f;
+            int a=before(ms);
+            int b=Math.min(a+1,spectrum.length-1);
+            if (a==b) return BandSpectrum.range(spectrum[a],minHz,maxHz);
+            float blend=clamp((float)(ms-timestamps[a])/Math.max(1,timestamps[b]-timestamps[a]));
+            return lerp(BandSpectrum.range(spectrum[a],minHz,maxHz),
+                    BandSpectrum.range(spectrum[b],minHz,maxHz),blend);
+        }
+        /** Fills a caller-owned buffer with interpolated 32-band levels, zero allocation. */
+        public void spectrumAt(long ms,float[] output) {
+            if(output==null || output.length<BandSpectrum.COUNT) return;
+            if(spectrum.length==0) {
+                java.util.Arrays.fill(output,0f);return;
+            }
+            int a=before(ms),b=Math.min(a+1,spectrum.length-1);
+            float t=a==b?0f:clamp((float)(ms-timestamps[a])/
+                    Math.max(1,timestamps[b]-timestamps[a]));
+            for(int i=0;i<BandSpectrum.COUNT;i++)
+                output[i]=lerp(spectrum[a][i],spectrum[b][i],t);
+        }
+        private int before(long ms) {
+            int lo=0,hi=timestamps.length-1;
+            if (ms<=timestamps[0]) return 0;
+            if (ms>=timestamps[hi]) return hi;
+            while (hi-lo>1) {
+                int mid=(lo+hi)>>>1;
+                if(timestamps[mid]<=ms) lo=mid; else hi=mid;
+            }
+            return lo;
         }
         public Features at(long ms) {
             if (features.length == 0) return Features.zero();
-            int lo=0, hi=timestamps.length-1;
-            if (ms <= timestamps[0]) return features[0];
-            if (ms >= timestamps[hi]) return features[hi];
-            while (hi-lo>1) {
-                int mid=(hi+lo) >>> 1;
-                if (timestamps[mid] <= ms) lo=mid; else hi=mid;
-            }
-            float t=(float)(ms-timestamps[lo])/Math.max(1,timestamps[hi]-timestamps[lo]);
+            int lo=before(ms), hi=Math.min(lo+1,features.length-1);
+            if (lo==hi) return features[lo];
+            float t=clamp((float)(ms-timestamps[lo])/Math.max(1,timestamps[hi]-timestamps[lo]));
             Features a=features[lo], b=features[hi];
             return new Features(lerp(a.bass,b.bass,t), lerp(a.mids,b.mids,t),
                     lerp(a.highs,b.highs,t), lerp(a.kick,b.kick,t), lerp(a.snare,b.snare,t));
@@ -215,10 +245,17 @@ public final class AudioAnalyzer {
             Fft.forward(re,im);
             float lo=0f, mid=0f, hi=0f;
             int nlo=0,nmid=0,nhi=0;
+            float[] bandPower=new float[BandSpectrum.COUNT];
+            int[] bandCount=new int[BandSpectrum.COUNT];
             float effectiveRate=(float)sampleRate/DECIMATE;
             for (int k=2;k<N/2;k++) {
                 float hz=k*effectiveRate/N;
                 float p=re[k]*re[k]+im[k]*im[k];
+                if (hz>=BandSpectrum.MIN_HZ && hz<BandSpectrum.MAX_HZ) {
+                    int idx=BandSpectrum.index(hz);
+                    bandPower[idx]+=p;
+                    bandCount[idx]++;
+                }
                 if (hz>=25 && hz<180) { lo+=p; nlo++; }
                 else if (hz>=180 && hz<2000) { mid+=p; nmid++; }
                 else if (hz>=2000 && hz<8000) { hi+=p; nhi++; }
@@ -226,8 +263,11 @@ public final class AudioAnalyzer {
             float a=(float)Math.sqrt(lo/Math.max(1,nlo));
             float b=(float)Math.sqrt(mid/Math.max(1,nmid));
             float c=(float)Math.sqrt(hi/Math.max(1,nhi));
+            float[] spectrum=new float[BandSpectrum.COUNT];
+            for (int i=0;i<spectrum.length;i++)
+                spectrum[i]=(float)Math.sqrt(bandPower[i]/Math.max(1,bandCount[i]));
             long ms=(long)((decimatedCount-N/2.0)*DECIMATE*1000/sampleRate);
-            raw.add(new Raw(ms,a,b,c));
+            raw.add(new Raw(ms,a,b,c,spectrum));
         }
         Track complete() {
             if (raw.isEmpty()) throw new IllegalArgumentException("Audio terlalu singkat atau tidak terbaca.");
@@ -238,6 +278,18 @@ public final class AudioAnalyzer {
             float normC=Math.max(0.00001f,percentile(c,.85f));
             Features[] frames=new Features[raw.size()];
             long[] time=new long[raw.size()];
+            float[][] spectrum=new float[raw.size()][BandSpectrum.COUNT];
+            float[] normBands=new float[BandSpectrum.COUNT];
+            float maximum=0f;
+            // Robust per-band reference, with shared floor to avoid amplifying noise-only bands.
+            for (int k=0;k<BandSpectrum.COUNT;k++) {
+                List<Float> bandValues=new ArrayList<>(raw.size());
+                for (Raw r:raw) bandValues.add(r.bands[k]);
+                normBands[k]=Math.max(.00001f,percentile(bandValues,.85f));
+                maximum=Math.max(maximum,normBands[k]);
+            }
+            for (int k=0;k<normBands.length;k++)
+                normBands[k]=Math.max(normBands[k],maximum*.06f);
             float averageBass=0, previousBass=0, averageMid=0, previousMid=0;
             long lastKick=-1000,lastSnare=-1000;
             for(int i=0;i<raw.size();i++) {
@@ -259,6 +311,8 @@ public final class AudioAnalyzer {
                 previousBass=bass;
                 previousMid=mids;
                 frames[i]=new Features(bass,mids,highs,kick,snare);
+                for(int k=0;k<BandSpectrum.COUNT;k++)
+                    spectrum[i][k]=clamp(r.bands[k]/normBands[k]*.68f);
                 time[i]=r.ms;
             }
             // Keep transient events visible across adjacent frames for reliable drawing at 60 fps.
@@ -267,7 +321,7 @@ public final class AudioAnalyzer {
                 frames[i]=new Features(cur.bass,cur.mids,cur.highs,
                         Math.max(cur.kick,prev.kick*.72f), Math.max(cur.snare,prev.snare*.65f));
             }
-            return new Track(time,frames);
+            return new Track(time,frames,spectrum);
         }
         private float percentile(List<Float> values,float p) {
             Collections.sort(values);
