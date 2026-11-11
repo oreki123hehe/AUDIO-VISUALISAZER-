@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
     private LinearLayout effectContainer;
     private Button addLayerButton;
     private ReactiveView reactive;
+    private GpuPreviewView gpuPreview;
     private MediaPlayer player;
     private Button playButton, ratioButton;
     private TextView status, timeline;
@@ -143,6 +144,8 @@ public class MainActivity extends Activity {
         FrameLayout viewport=new FrameLayout(this);
         viewport.setBackgroundColor(0xff040612);
         viewport.addView(reactive,new FrameLayout.LayoutParams(-1,-1));
+        gpuPreview=new GpuPreviewView(this,reactive);
+        viewport.addView(gpuPreview,new FrameLayout.LayoutParams(-1,-1));
         LinearLayout.LayoutParams frameParams=new LinearLayout.LayoutParams(-1,0,1f);
         frameParams.topMargin=dp(5);
         root.addView(viewport,frameParams);
@@ -1010,7 +1013,7 @@ public class MainActivity extends Activity {
                 "Android: "+Build.VERSION.RELEASE+"\n"+
                 "Thermal status: "+ThermalInfo.label(probe.peak())+"\n"+
                 "Java heap used: "+used+" MB\n\n"+
-                "PREVIEW (saat musik diputar)\n"+reactive.previewReport()+
+                "PREVIEW (saat musik diputar)\n"+reactive.previewReport()+"\n"+(gpuPreview==null?"":gpuPreview.report())+
                 "\n\nLAST EXPORT\n"+lastExportReport+
                 "\n\nCatatan: status termal tidak menunjukkan suhu °C. " +
                 "Angka nyata hanya valid setelah dijalankan di perangkat.";
@@ -1098,13 +1101,19 @@ public class MainActivity extends Activity {
     }
     private int dp(float value) {return (int)(value*getResources().getDisplayMetrics().density+.5f);}
     @Override protected void onPause() {
+        if(gpuPreview!=null)gpuPreview.onPause();
         super.onPause();
         if(player!=null) {
             try {player.pause();} catch(Exception ignored) { }
         }
         if(playButton!=null) playButton.setText("▶ Play");
     }
+    @Override protected void onResume(){
+        super.onResume();
+        if(gpuPreview!=null)gpuPreview.onResume();
+    }
     @Override protected void onDestroy() {
+        if(gpuPreview!=null)gpuPreview.detach();
         generation.incrementAndGet();
         ui.removeCallbacks(timeUpdater);
         if(analysisTask!=null) analysisTask.cancel(true);

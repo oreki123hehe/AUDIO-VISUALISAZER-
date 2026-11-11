@@ -54,10 +54,17 @@ public final class SmokeTestActivity extends Activity {
             scene.setShaderSource(ShaderSource.NEON);
             if(!ShaderSource.NEON.equals(scene.getShaderSource()))
                 throw new IllegalStateException("GPU custom shader not configured");
-            for(int layer:scene.getLayerOrder())
-                if(scene.getLayerType(layer)!=ReactiveView.DUST &&
-                        scene.getLayerType(layer)!=ReactiveView.GLOW)
-                    scene.setEnabled(layer,false);
+            // Force all ten GPU particle families, masks, and blend paths through real GLES.
+            for(int layer:scene.getLayerOrder()) {
+                scene.setEnabled(layer,true);
+                scene.setDensity(layer,35);
+                if(scene.getLayerType(layer)==ReactiveView.FIRE)scene.setBlend(layer,1);
+                if(scene.getLayerType(layer)==ReactiveView.SNOW)scene.setMask(layer,1);
+                if(scene.getLayerType(layer)==ReactiveView.DUST){
+                    scene.setMask(layer,4);
+                    scene.setPolygonMask(layer,"0.10,0.10;0.90,0.10;0.85,0.90;0.15,0.90");
+                }
+            }
             String json=scene.exportProjectJson();
             ReactiveView verifyShader=new ReactiveView(this);
             if(!verifyShader.importProjectJson(json) ||
@@ -66,6 +73,8 @@ public final class SmokeTestActivity extends Activity {
             ExportProfile profile=new ExportProfile(320,568,30,75,15,10);
             String stats=Mp4Exporter.export(this,Uri.fromFile(wav),Uri.fromFile(mp4),
                     scene,profile,2000,new AtomicBoolean(false),(percent,stage)->{});
+            if(!stats.contains("GPU particle points:") || stats.contains("GPU particle points: 0"))
+                throw new IllegalStateException("GPU effects were not submitted: "+stats);
             if(!mp4.exists() || mp4.length()<4096)
                 throw new IllegalStateException("MP4 not written");
             MediaExtractor extractor=new MediaExtractor();

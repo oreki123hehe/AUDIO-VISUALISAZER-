@@ -21,6 +21,10 @@ final class CanvasEncoderSurface implements AutoCloseable {
     private int width,height;
     private int timeUniform,kickUniform,bassUniform,snareUniform,trebleUniform,resolutionUniform;
     private boolean textureAllocated=false;
+    private GpuParticleRenderer particleGpu;
+    private String gpuName="unknown";
+    private long totalGpuPoints=0L;
+    String getGpuReport(){return "GPU: "+gpuName+" | GPU particle points: "+totalGpuPoints;}
     CanvasEncoderSurface(Surface codecSurface,int width,int height,String fragmentSource) {
         this.surface=codecSurface;this.width=width;this.height=height;
         try {
@@ -68,6 +72,8 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
+        gpuName=GLES20.glGetString(GLES20.GL_VENDOR)+" / "+GLES20.glGetString(GLES20.GL_RENDERER);
+        particleGpu=new GpuParticleRenderer();
         } catch (RuntimeException error) {
             // Invalid user GLSL must never leave an EGL context or codec surface behind.
             try {close();} catch(Exception ignored) { }
@@ -86,7 +92,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         return shader;
     }
     void submit(Bitmap frame,long ptsNs,float pulse,float chromatic,float vignette,
-            float timeSeconds,AudioAnalyzer.Features audio) {
+            float timeSeconds,AudioAnalyzer.Features audio,GpuEffectFrame particles) {
         GLES20.glViewport(0,0,width,height);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
         if(!textureAllocated) {
@@ -113,6 +119,8 @@ final class CanvasEncoderSurface implements AutoCloseable {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
         GLES20.glDisableVertexAttribArray(position);
         GLES20.glDisableVertexAttribArray(texCoord);
+        // Draw procedural GPU particles directly over the base scene. No Canvas particle Bitmap uploads.
+        totalGpuPoints+=particleGpu.draw(particles,width,height);
         int error=GLES20.glGetError();
         if(error!=GLES20.GL_NO_ERROR)throw new IllegalStateException("OpenGL error "+error);
         EGLExt.eglPresentationTimeANDROID(display,window,ptsNs);
@@ -122,6 +130,7 @@ final class CanvasEncoderSurface implements AutoCloseable {
         if(display!=EGL14.EGL_NO_DISPLAY) {
             if(context!=EGL14.EGL_NO_CONTEXT) {
                 EGL14.eglMakeCurrent(display,window,window,context);
+                if(particleGpu!=null){particleGpu.close();particleGpu=null;}
                 if(texture!=0)GLES20.glDeleteTextures(1,new int[]{texture},0);
                 if(program!=0)GLES20.glDeleteProgram(program);
             }

@@ -52,10 +52,11 @@ public final class Mp4Exporter {
         long startedNs=System.nanoTime();
         long finalFileBytes=0L;
         long videoElapsedNs=0L;
+        String gpuReport="GPU renderer belum dijalankan";
         try {
             check(cancelled);
             progress.update(0,"Render frame");
-            encodeVideo(video,scene,profile,durationMs,cancelled,progress,frameMetrics,thermal);
+            gpuReport=encodeVideo(video,scene,profile,durationMs,cancelled,progress,frameMetrics,thermal);
             videoElapsedNs=System.nanoTime()-startedNs;
             check(cancelled);
             progress.update(91,"Menyiapkan audio");
@@ -96,6 +97,7 @@ public final class Mp4Exporter {
                     "Output "+profile.width+"x"+profile.height+" @ "+profile.fps+" FPS"+
                     " | internal "+profile.rasterWidth()+"x"+profile.rasterHeight()+"\n"+
                     frameMetrics.summary(videoElapsedNs)+"\n"+
+                    gpuReport+"\n"+
                     "Total (video + audio + mux): "+Math.round(elapsedNs/1e6)+" ms\n"+
                     "Thermal peak: "+ThermalInfo.label(thermal.peak())+" (OS severity; not °C)\n"+
                     "App Java heap in use: "+usedMb+" MB | final MP4: "+finalFileBytes/(1024*1024)+" MB";
@@ -108,7 +110,7 @@ public final class Mp4Exporter {
         if(stop.get() || Thread.currentThread().isInterrupted())
             throw new InterruptedException("Ekspor dibatalkan");
     }
-    private static void encodeVideo(File dest,ReactiveView scene,ExportProfile profile,long durationMs,
+    private static String encodeVideo(File dest,ReactiveView scene,ExportProfile profile,long durationMs,
             AtomicBoolean stop,Progress progress,FrameMetrics metrics,ThermalInfo thermal) throws Exception {
         int w=profile.width,h=profile.height,fps=profile.fps;
         MediaCodec encoder=null;MediaMuxer muxer=null;CanvasEncoderSurface gl=null;
@@ -138,14 +140,14 @@ public final class Mp4Exporter {
                 check(stop);
                 long ms=FrameTimebase.frameMillis(index,fps);
                 long renderStart=System.nanoTime();
-                scene.renderExportFrame(canvas,frame.getWidth(),frame.getHeight(),ms);
+                GpuEffectFrame particles=scene.renderGpuExportFrame(canvas,frame.getWidth(),frame.getHeight(),ms);
                 long renderTime=System.nanoTime()-renderStart;
                 AudioAnalyzer.Features f=scene.getTrack().at(ms);
                 float pulse=Math.min(1f,f.kick*.75f+f.bass*.25f);
                 long submitStart=System.nanoTime();
                 gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
                         profile.chromaticPercent/100f,profile.vignettePercent/100f,
-                        ms/1000f,f);
+                        ms/1000f,f,particles);
                 metrics.record(renderTime,System.nanoTime()-submitStart);
                 muxerStarted=drain(encoder,muxer,info,false,muxerStarted);
                 if(index%fps==0) {
@@ -159,6 +161,7 @@ public final class Mp4Exporter {
             encoder.signalEndOfInputStream();
             muxerStarted=drain(encoder,muxer,info,true,muxerStarted);
             if(!muxerStarted)throw new IllegalStateException("Video encoder tidak mengeluarkan track");
+            return gl.getGpuReport();
         }finally {
             if(gl!=null)gl.close();
             if(frame!=null && !frame.isRecycled())frame.recycle();

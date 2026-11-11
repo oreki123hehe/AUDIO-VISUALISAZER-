@@ -115,3 +115,11 @@ The analyzer estimates an approximate song tempo (70–190 BPM) from detected tr
 - Layer edits autosave the project JSON once when the gesture finishes, rather than writing persistent preferences every render frame.
 - Fix waveform indexing at the far-right zoom boundary and prevent off-screen keyframes from appearing as fake markers at view edges.
 - Added pure-Java timeline-edit regression tests. **These checks are not physical-device verification.**
+
+## GPU particle renderer (new experimental GLES2 pipeline)
+
+- **All ten built-in FX families** (dust, fire, rain, water, smoke, snow, sparks, lightning, glow, glitch) now use procedural GPU point sprites in the active preview overlay and H.264 export pipeline. Canvas CPU continues to composite background, text and image/video frames, but does **not** draw particle shapes in the GPU path. The existing Canvas path remains a fallback if GLES preview initialization fails.
+- GPU vertex shader animates particle movement deterministically by audio time; scene exports independent FFT/envelope-mapped strength, density, size, speed, opacity, timeline keyframes, transforms, blend, mask radius, and 3–32 point polygon data. Full codec path composes GPU point sprites over the uploaded CPU base frame.
+- Diagnostics now display real Android GLES vendor/renderer and how many GPU particles were submitted. Displayed average GLES submission time does **not** equal actual shader execution time.
+- Known limitation: particle pass currently composites **after** non-effect layers; mixing foreground images/text between FX layers can change z-order relative to legacy Canvas. This is not yet a GPU-only entire scene compositor, and hardware video decoding still depends on Android.
+- Emulator integration test now exercises all 10 GPU FX families including polygon mask and blend. Successful emulator tests cannot establish thermal performance on physical Poco F6.

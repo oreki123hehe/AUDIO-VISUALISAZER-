@@ -102,6 +102,53 @@ public final class ReactiveView extends View {
     private AudioAnalyzer.Features live=AudioAnalyzer.Features.zero();
     private long exportPreviousMs=-1;
     private boolean inExportFrame=false;
+    private boolean gpuPreviewActive=false;
+    private GpuFrameListener gpuFrameListener;
+    /** In the GLES preview path Canvas only composites background/image/video/text.
+     * All ten built-in FX types are rendered by GpuParticleRenderer, on a transparent Surface. */
+    public interface GpuFrameListener {void onGpuFrame(GpuEffectFrame frame);}
+    public void setGpuFrameListener(GpuFrameListener listener) {gpuFrameListener=listener;}
+    public void setGpuPreviewActive(boolean active) {gpuPreviewActive=active;invalidate();}
+    public boolean isGpuPreviewActive(){return gpuPreviewActive;}
+    private GpuEffectFrame snapshotGpuFrame(){
+        java.util.ArrayList<GpuEffectFrame.Layer> batches=new java.util.ArrayList<>();
+        for(int id:layerOrder){
+            int type=layerType[id];
+            if(type>=EFFECT_COUNT||!enabled[id]||framePositionMs<startTimeMs[id]
+                    ||framePositionMs>endTimeMs[id])continue;
+            PolygonMask p=polygons[id];
+            float[] polygon=null;
+            if(mask[id]==4 && p!=null){
+                polygon=new float[p.count()*2];
+                for(int i=0;i<p.count();i++){
+                    polygon[i*2]=p.x(i);polygon[i*2+1]=p.y(i);
+                }
+            }
+            int count=Math.round(512f*amount(id));
+            float scale=.25f+animated(id,AutomationParameters.SCALE)/100f*1.5f;
+            int dir=animated(id,AutomationParameters.DIRECTION);
+            batches.add(new GpuEffectFrame.Layer(id,type,blend[id],mask[id],count,
+                    intensity(id),opacity(id),volume(id),speed(id),
+                    (animated(id,AutomationParameters.X)-50)*3.6f/400f,
+                    (animated(id,AutomationParameters.Y)-50)/100f,
+                    scale,(animated(id,AutomationParameters.ROTATION)-50)*3.6f,
+                    dir==0?-1f:(dir-1)/99f,
+                    animated(id,AutomationParameters.MASK_RADIUS)/100f,polygon));
+        }
+        return new GpuEffectFrame(Math.max(0L,framePositionMs),portrait,
+                batches.toArray(new GpuEffectFrame.Layer[0]));
+    }
+    /** Single-pass CPU base and GLES particle uniforms for the export GL context. */
+    public GpuEffectFrame renderGpuExportFrame(Canvas canvas,int width,int height,long positionMs){
+        float dt=exportPreviousMs<0?0f:Math.max(0f,(positionMs-exportPreviousMs)/1000f);
+        exportPreviousMs=positionMs;
+        inExportFrame=true;
+        try{
+            advance(positionMs,track!=null,dt);
+            render(canvas,width,height,dt,true);
+            return snapshotGpuFrame();
+        } finally {inExportFrame=false;}
+    }
     private FrameMetrics previewMetrics=new FrameMetrics();
     private PreviewPacing previewPacing=new PreviewPacing();
     private long previewMetricsStartNs=0L;
@@ -603,7 +650,9 @@ public final class ReactiveView extends View {
         long position=clock==null?0:clock.positionMs();
         boolean playing=clock!=null && clock.playing() && track!=null;
         advance(position,playing,dt);
-        render(canvas,getWidth(),getHeight(),playing?dt:0f);
+        render(canvas,getWidth(),getHeight(),playing?dt:0f,gpuPreviewActive);
+        if(gpuPreviewActive && gpuFrameListener!=null)
+            gpuFrameListener.onGpuFrame(snapshotGpuFrame());
         if(previewMetricsStartNs==0L)previewMetricsStartNs=beginNs;
         if(playing){previewMetrics.record(System.nanoTime()-beginNs,0);previewPacing.record(beginNs);}
         if(playing) postInvalidateDelayed(economyMode?33:16);
@@ -676,6 +725,9 @@ public final class ReactiveView extends View {
         return bitmap;
     }
     private void render(Canvas canvas,int width,int height,float dt) {
+        render(canvas,width,height,dt,false);
+    }
+    private void render(Canvas canvas,int width,int height,float dt,boolean skipCpuFx) {
         if(width<=0 || height<=0) return;
         canvas.drawColor(Color.rgb(7,9,21));
         float aspect=portrait?9f/16f:16f/9f;
@@ -692,6 +744,7 @@ public final class ReactiveView extends View {
         drawBackground(canvas,h);
         for(int fx:layerOrder) {
             if(!enabled[fx] || framePositionMs<startTimeMs[fx] || framePositionMs>endTimeMs[fx]) continue;
+            if(skipCpuFx && layerType[fx]<EFFECT_COUNT)continue;
             activeLayer=fx;
             int save=canvas.save();
             float centerX=200f,centerY=h*.5f;
