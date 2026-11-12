@@ -45,6 +45,7 @@ public final class SmokeTestActivity extends Activity {
         try {
             writeWav(wav,2,44100);
             AudioAnalyzer.Track track=AudioAnalyzer.analyze(this,Uri.fromFile(wav));
+            verifyReactiveStudio(track,Uri.fromFile(wav));
             if(track==null || track.waveformPeaks(48).length!=48)
                 throw new IllegalStateException("Audio analysis did not return valid peaks");
             ReactiveView scene=new ReactiveView(this);
@@ -174,6 +175,54 @@ public final class SmokeTestActivity extends Activity {
             return "H264/AAC + cached GLES compositor + GPU image/text/video layers + portable ZIP: "+
                     mp4.length()+" bytes; "+stats;
         }finally {wav.delete();mp4.delete();}
+    }
+    private void verifyReactiveStudio(AudioAnalyzer.Track track,Uri audio) throws Exception {
+        ReactiveView scene=new ReactiveView(this);for(int id:scene.getLayerOrder())scene.removeLayer(id);
+        scene.setTrack(track);scene.setPostFx(0,0);scene.setStem(0,track,audio.toString());
+        int element=scene.addLayer(ReactiveView.VISUALIZER);scene.setOpacity(element,100);scene.setLogoSize(element,90);
+        AudioRoute route=new AudioRoute();route.source=7;route.depth=15;
+        scene.setAudioRoute(element,AutomationParameters.SCALE,route);
+        android.graphics.Bitmap logo=android.graphics.Bitmap.createBitmap(192,96,android.graphics.Bitmap.Config.ARGB_8888);
+        for(int y=0;y<96;y++)for(int x=0;x<192;x++)logo.setPixel(x,y,x<48||x>=144?0xff00ff00:y<48?0xffff0000:0xff0000ff);
+        File logoFile=new File(getFilesDir(),"test-logo.png");
+        try(FileOutputStream out=new FileOutputStream(logoFile)){logo.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        scene.setLayerImage(element,logo,Uri.fromFile(logoFile).toString());
+        android.graphics.Bitmap output=GpuImageRenderer.render(scene,320,568,350);
+        try{
+            int top=output.getPixel(160,264),bottom=output.getPixel(160,304);
+            if(android.graphics.Color.red(top)<180||android.graphics.Color.blue(bottom)<180)
+                throw new IllegalStateException("Attached logo inverted or missing: "+Integer.toHexString(top)+" / "+Integer.toHexString(bottom));
+            // Green side strips must disappear after square center crop; the circular mask
+            // must expose the background outside the logo rather than a rectangular image.
+            int corner=output.getPixel(115,239);
+            if(android.graphics.Color.green(corner)>android.graphics.Color.red(corner)+80&&android.graphics.Color.green(corner)>android.graphics.Color.blue(corner)+80)
+                throw new IllegalStateException("Logo center crop failed");
+        }finally{output.recycle();}
+        for(int style=1;style<VisualizerMesh.STYLES.length;style++){
+            int id=scene.addLayer(ReactiveView.VISUALIZER);scene.setVisualizerStyle(id,style);scene.setLayerY(id,15+style*12);scene.setSize(id,18);
+        }
+        String json=scene.exportProjectJson();ReactiveView restored=new ReactiveView(this);
+        if(!restored.importProjectJson(json)||restored.getLayerCount()!=6)
+            throw new IllegalStateException("Multiple visualizers not preserved");
+        if(restored.getAudioRoute(restored.getLayerOrder()[0],AutomationParameters.SCALE).source!=7)
+            throw new IllegalStateException("Independent stem route not preserved");
+        File bundle=new File(getFilesDir(),"studio-test.zip");
+        try{
+            ProjectBundle.save(this,Uri.fromFile(bundle),json,audio,null);
+            ProjectBundle.Loaded loaded=ProjectBundle.open(this,Uri.fromFile(bundle));
+            org.json.JSONObject metadata=new org.json.JSONObject(loaded.json);
+            if(!metadata.getJSONArray("stems").getString(0).startsWith("file:"))throw new IllegalStateException("Stem not bundled");
+            if(!metadata.getJSONArray("layers").getJSONObject(0).getString("imageUri").startsWith("file:"))
+                throw new IllegalStateException("Visualizer logo not bundled");
+        }finally{bundle.delete();}
+        output=GpuImageRenderer.render(scene,320,568,600);output.recycle();
+        File mp4=new File(getFilesDir(),"studio-elements.mp4");
+        try{Mp4Exporter.export(this,audio,Uri.fromFile(mp4),scene,new ExportProfile(320,568,30,65,0,0),1000,new AtomicBoolean(false),(progress,stage)->{});}
+        finally{mp4.delete();scene.recycleLayerImages();logoFile.delete();}
+        // Sampling after a seek must give exactly the same audio envelope.
+        float before=track.envelopeAt(400,0,25,180,0,20,180);
+        track.envelopeAt(1200,0,25,180,0,20,180);
+        if(before!=track.envelopeAt(400,0,25,180,0,20,180))throw new IllegalStateException("Audio route depends on seek history");
     }
     private static void write16(FileOutputStream out,int value) throws IOException {
         out.write(value&255);out.write((value>>>8)&255);

@@ -98,7 +98,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         " else if(uType<8.5){a=pow(1.0-smoothstep(.0,1.0,d),1.7)*(.22+.55*uPower);c=vec3(.62,.40,1.0);}\n"+
         " else {a=(1.0-step(.18,abs(p.y)))*(.18+.62*uPower);c=vec3(1.0,.22,.83);}\n"+
         " a=clamp(a*vAlpha*uOpacity,0.0,1.0); if(a<.004)discard;\n"+
-        " gl_FragColor=vec4(c,a);\n"+
+        " gl_FragColor=vec4(c*a,a);\n"+
         "}\n";
 
     private final int program,position;
@@ -170,10 +170,10 @@ final class GpuParticleRenderer implements AutoCloseable {
         for(GpuEffectFrame.Layer layer:frame.layers){
             int count=Math.min(MAX_PARTICLES,Math.round(BASE_COUNT[layer.type]*layer.particleCount/512f));
             if(count<=0||layer.opacity<=0)continue;
-            if(layer.blend==1)GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE);
+            if(layer.blend==1)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE);
             else if(layer.blend==2)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_COLOR);
             else if(layer.blend==3)GLES20.glBlendFunc(GLES20.GL_DST_COLOR,GLES20.GL_ONE_MINUS_SRC_ALPHA);
-            else GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            else GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
             GLES20.glUniform1f(u[4],layer.type);
             GLES20.glUniform1f(u[5],layer.power);
             GLES20.glUniform1f(u[6],layer.speed);
@@ -194,7 +194,7 @@ final class GpuParticleRenderer implements AutoCloseable {
             total+=count;
         }
         GLES20.glDisableVertexAttribArray(position);
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
         GLES20.glDisable(GLES20.GL_BLEND);
         int err=GLES20.glGetError();
         if(err!=GLES20.GL_NO_ERROR)throw new IllegalStateException("GLES particle render error: "+err);

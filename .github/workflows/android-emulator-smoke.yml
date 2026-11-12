@@ -1,7 +1,8 @@
 name: Android Emulator Offline MP4 Smoke Test
 on:
+  pull_request:
   push:
-    branches: [main, release-candidate]
+    branches: [main, release-candidate, 'codex/**']
   workflow_dispatch:
 jobs:
   emulator-pipeline:

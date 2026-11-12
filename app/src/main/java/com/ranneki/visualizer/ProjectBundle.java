@@ -36,9 +36,14 @@ public final class ProjectBundle {
             try(ZipOutputStream zip=new ZipOutputStream(stream)) {
                 if(music!=null){zipAsset(context,zip,"assets/music.bin",music,total);project.put("bundleAudio","assets/music.bin");}
                 if(background!=null){zipAsset(context,zip,"assets/background.bin",background,total);project.put("bundleBackground","assets/background.bin");}
+                JSONArray stems=project.optJSONArray("stems");
+                if(stems!=null)for(int i=0;i<Math.min(4,stems.length());i++){
+                    String uri=stems.optString(i,"");
+                    if(!uri.isEmpty()){String entry="assets/stem_"+i+".bin";zipAsset(context,zip,entry,Uri.parse(uri),total);stems.put(i,entry);}
+                }
                 for(int i=0;i<layers.length();i++){
                     JSONObject layer=layers.getJSONObject(i);
-                    if(layer.optInt("type")==ReactiveView.IMAGE){
+                    if(layer.optInt("type")==ReactiveView.IMAGE||layer.optInt("type")==ReactiveView.VISUALIZER){
                         String str=layer.optString("imageUri","");
                         if(!str.isEmpty()){
                             String entry="assets/image_"+i+".bin";
@@ -90,7 +95,7 @@ public final class ProjectBundle {
                     ZipEntry entry;
                     while((entry=zip.getNextEntry())!=null){
                         String name=entry.getName();
-                        if(!name.equals("project.json")&&!name.matches("assets/(music|background|image_[0-9]{1,3}|video_[0-9]{1,3})\\.bin"))
+                        if(!name.equals("project.json")&&!name.matches("assets/(music|background|stem_[0-3]|image_[0-9]{1,3}|video_[0-9]{1,3})\\.bin"))
                             throw new IllegalArgumentException("Unknown archive entry");
                         if(media.containsKey(name)||name.equals("project.json")&&jsonBytes!=null)
                             throw new IllegalArgumentException("Duplicate entry");
@@ -129,6 +134,15 @@ public final class ProjectBundle {
                         // Archives must not trust stale content:// URIs from another phone.
                         throw new IllegalArgumentException("Unbundled layer media: "+key);
                     }
+                }
+            }
+            JSONArray stems=project.optJSONArray("stems");
+            if(stems!=null)for(int i=0;i<Math.min(4,stems.length());i++){
+                String asset=stems.optString(i,"");
+                if(!asset.isEmpty()){
+                    if(!asset.matches("assets/stem_[0-3]\\.bin")||!media.containsKey(asset))
+                        throw new IllegalArgumentException("Missing or unbundled stem");
+                    stems.put(i,media.get(asset).toString());
                 }
             }
             Uri music=media.get(project.optString("bundleAudio",""));

@@ -40,6 +40,10 @@ public final class AudioAnalyzer {
         private final Features[] features;
         private final float[][] spectrum;
         private final BeatGrid beatGrid;
+        private final java.util.LinkedHashMap<String,float[]> envelopes=
+                new java.util.LinkedHashMap<String,float[]>(32,.75f,true){
+                    @Override protected boolean removeEldestEntry(java.util.Map.Entry<String,float[]> e){return size()>96;}
+                };
         private Track(long[] timestamps, Features[] features, float[][] spectrum) {
             this.timestamps=timestamps; this.features=features; this.spectrum=spectrum;
             float[] kick=new float[features.length],snare=new float[features.length];
@@ -48,6 +52,47 @@ public final class AudioAnalyzer {
         }
         public int estimatedBpm(){return beatGrid.bpm();}
         public long[] beatPositions(){return beatGrid.positions();}
+        /** Precomputed in audio time. Seeking and 30/60 FPS evaluate the same envelope. */
+        synchronized float envelopeAt(long ms,int source,int minHz,int maxHz,int threshold,int attack,int release){
+            if(features.length==0||ms>timestamps[timestamps.length-1]+80)return 0;
+            String key=source+":"+minHz+":"+maxHz+":"+threshold+":"+attack+":"+release;
+            float[] curve=envelopes.get(key);
+            if(curve==null){
+                curve=new float[features.length];float previous=0;
+                for(int i=0;i<curve.length;i++){
+                    Features f=features[i];float value;
+                    switch(source){
+                        case 0:value=f.kick;break;
+                        case 1:value=f.bass;break;
+                        case 2:value=clamp(f.bass*.58f+f.kick*.88f);break;
+                        case 3:value=f.highs;break;
+                        case 4:value=f.snare;break;
+                        case 5:value=BandSpectrum.range(spectrum[i],minHz,maxHz);break;
+                        case 6:value=f.mids;break;
+                        default:value=Math.max(f.bass,Math.max(f.mids,f.highs));break;
+                    }
+                    float dt=i==0?Math.max(1,timestamps[0]):Math.max(1,timestamps[i]-timestamps[i-1]);
+                    previous=ReactiveEnvelope.step(previous,value,threshold/100f,attack,release,dt);
+                    curve[i]=previous;
+                }
+                envelopes.put(key,curve);
+            }
+            int a=before(ms),b=Math.min(a+1,curve.length-1);
+            float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            return lerp(curve[a],curve[b],t);
+        }
+        void spectrumRangeAt(long ms,int minHz,int maxHz,float[] output){
+            if(spectrum.length==0){java.util.Arrays.fill(output,0);return;}
+            int a=before(ms),b=Math.min(a+1,spectrum.length-1);
+            float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            float lo=(float)(Math.log(Math.max(25,minHz)/25.0)/Math.log(10000.0/25)*(BandSpectrum.COUNT-1));
+            float hi=(float)(Math.log(Math.max(minHz,maxHz)/25.0)/Math.log(10000.0/25)*(BandSpectrum.COUNT-1));
+            for(int i=0;i<output.length;i++){
+                float index=Math.max(0,Math.min(BandSpectrum.COUNT-1,lo+(hi-lo)*i/Math.max(1f,output.length-1)));
+                int x=(int)index,y=Math.min(x+1,BandSpectrum.COUNT-1);float k=index-x;
+                output[i]=lerp(lerp(spectrum[a][x],spectrum[a][y],k),lerp(spectrum[b][x],spectrum[b][y],k),t);
+            }
+        }
         /** Timeline overview from normalized analysis frames (not decoded PCM).
          * Peak pooling preserves short kick/transient spikes without extra decoding. */
         public float[] waveformPeaks(int columns) {

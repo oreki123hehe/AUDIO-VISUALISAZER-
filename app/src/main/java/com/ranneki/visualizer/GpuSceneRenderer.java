@@ -38,7 +38,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "uniform float uScale,uDesignH;varying vec2 vUV,vDesign;"+
             "void main(){vec2 center=vec2(200.0,uDesignH*0.5);"+
             "vec2 untransformed=center+aCorner*uSize;"+
-            "vDesign=untransformed/vec2(400.0,uDesignH);vUV=vec2(aCorner.x+.5,.5-aCorner.y);"+
+            "vDesign=untransformed/vec2(400.0,uDesignH);vUV=aCorner+vec2(.5);"+
             "vec2 p=aCorner*uSize*uScale;"+
             "vec2 rotated=vec2(p.x*uRot.x-p.y*uRot.y,p.x*uRot.y+p.y*uRot.x);"+
             "vec2 coord=center+rotated+uShift+uCamera;"+
@@ -46,7 +46,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);}";
     private static final String SPRITE_FRAGMENT="precision mediump float;"+
             "varying vec2 vUV,vDesign;uniform sampler2D uImage;"+
-            "uniform float uAlpha,uMaskRadius,uDesignH;"+
+            "uniform float uAlpha,uMaskRadius,uDesignH;uniform vec4 uCrop;uniform int uLocalShape;"+
             "uniform int uMask,uPolyCount;uniform vec2 uPoly[32];"+
             "bool insidePoly(vec2 q){bool inside=false;for(int i=0;i<32;i++){"+
             "if(i<uPolyCount){int k=(i==0)?(uPolyCount-1):(i-1);"+
@@ -58,7 +58,12 @@ final class GpuSceneRenderer implements AutoCloseable {
             "if(uMask==2&&p.y>uMaskRadius)discard;"+
             "if(uMask==3&&p.y<1.0-uMaskRadius)discard;"+
             "if(uMask==4&&uPolyCount>=3&&!insidePoly(p))discard;"+
-            "vec4 src=texture2D(uImage,vUV);gl_FragColor=vec4(src.rgb,src.a*uAlpha);}";
+            "float cover=1.0;"+
+            "if(uLocalShape==1)cover=1.0-smoothstep(.485,.5,length(vUV-vec2(.5)));"+
+            "if(uLocalShape==2){vec2 d=max(abs(vUV-vec2(.5))-vec2(.34),vec2(0.0));"+
+            "cover=1.0-smoothstep(.15,.16,length(d));}"+
+            "vec4 src=texture2D(uImage,mix(uCrop.xy,uCrop.zw,vUV));"+
+            "gl_FragColor=src*(uAlpha*cover);}";
     private static final String LINE_VERTEX="attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}";
     private static final String LINE_FRAG="precision mediump float;uniform vec4 uColor;void main(){gl_FragColor=uColor;}";
     private static final String TEXT_FRAG="precision mediump float;varying vec2 vPos;"+
@@ -67,12 +72,36 @@ final class GpuSceneRenderer implements AutoCloseable {
             "if(p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0)discard;"+
             "gl_FragColor=texture2D(uImage,vec2(p.x,p.y));}";
 
+    private static final String VISUALIZER_VERTEX="precision mediump float;attribute vec4 aPoint;"+
+            "uniform vec4 uRect;uniform vec2 uShift,uRot;uniform float uScale,uDesignH;"+
+            "varying vec2 vDesign;varying float vGradient,vEdge;"+
+            "void main(){vGradient=aPoint.z;vEdge=aPoint.w;"+
+            "vDesign=(aPoint.xy+vec2(200.0,uDesignH*.5))/vec2(400.0,uDesignH);"+
+            "vec2 p=aPoint.xy*uScale;vec2 r=vec2(p.x*uRot.x-p.y*uRot.y,p.x*uRot.y+p.y*uRot.x);"+
+            "vec2 xy=(r+vec2(200.0,uDesignH*.5)+uShift)/vec2(400.0,uDesignH);"+
+            "vec2 screen=uRect.xy+xy*uRect.zw;gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0,1);}";
+    private static final String VISUALIZER_FRAGMENT="precision mediump float;"+
+            "varying vec2 vDesign;varying float vGradient,vEdge;uniform vec3 uColor,uAccent;"+
+            "uniform float uAlpha,uMaskRadius,uDesignH;uniform int uMask,uPolyCount;uniform vec2 uPoly[32];"+
+            "bool insidePoly(vec2 q){bool yes=false;for(int i=0;i<32;i++){if(i<uPolyCount){"+
+            "int k=(i==0)?uPolyCount-1:i-1;vec2 a=uPoly[i],b=uPoly[k];"+
+            "if((a.y>q.y)!=(b.y>q.y)){if(q.x<(b.x-a.x)*(q.y-a.y)/(b.y-a.y)+a.x)yes=!yes;}}}return yes;}"+
+            "void main(){vec2 p=vDesign;"+
+            "if(uMask==1&&length((p-vec2(.5))*vec2(400.0,uDesignH))>uMaskRadius*240.0)discard;"+
+            "if(uMask==2&&p.y>uMaskRadius)discard;if(uMask==3&&p.y<1.0-uMaskRadius)discard;"+
+            "if(uMask==4&&uPolyCount>=3&&!insidePoly(p))discard;"+
+            "float alpha=uAlpha*(1.0-smoothstep(.65,1.0,abs(vEdge)));"+
+            "vec3 c=mix(uColor,uAccent,.5-.5*cos(vGradient*6.2831853));gl_FragColor=vec4(c*alpha,alpha);}";
+    private final VisualizerMesh visualizerMesh=new VisualizerMesh();
+    private final FloatBuffer visualizerBuffer=ByteBuffer.allocateDirect(128*18*4*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+    private int visualizerProgram;
     private final FloatBuffer quad;
     private final FloatBuffer ring;
     private final FloatBuffer spriteQuad;
     private final java.util.HashMap<Integer,SpriteTexture> spriteTextures=new java.util.HashMap<>();
     private final float[] polygons=new float[64];
     private int spriteProgram;
+    private final boolean[] activeSprites=new boolean[ReactiveView.MAX_LAYERS];
     private int cachedSpriteUploads;
     private int bgProgram,artProgram,lineProgram,textProgram;
     private int backdropTexture, titleTexture;
@@ -90,6 +119,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             lineProgram=program(LINE_VERTEX,LINE_FRAG);
             textProgram=program(VERTEX,TEXT_FRAG);
             spriteProgram=program(SPRITE_VERTEX,SPRITE_FRAGMENT);
+            visualizerProgram=program(VISUALIZER_VERTEX,VISUALIZER_FRAGMENT);
             titleTexture=makeTitle();
         } catch(RuntimeException e) {close();throw e;}
     }
@@ -154,6 +184,15 @@ final class GpuSceneRenderer implements AutoCloseable {
     }
     void begin(GpuSceneFrame frame,int width,int height,boolean offscreen){
         if(closed)throw new IllegalStateException("GPU compositor released");
+        java.util.Arrays.fill(activeSprites,false);
+        for(GpuSceneFrame.Item item:frame.drawOrder){
+            GpuSceneFrame.Sprite sprite=item.sprite!=null?item.sprite:item.visualizer==null?null:item.visualizer.logo;
+            if(sprite!=null)activeSprites[sprite.id]=true;
+        }
+        java.util.Iterator<java.util.Map.Entry<Integer,SpriteTexture>> slots=spriteTextures.entrySet().iterator();
+        while(slots.hasNext()){java.util.Map.Entry<Integer,SpriteTexture> slot=slots.next();
+            if(!activeSprites[slot.getKey()]){GLES20.glDeleteTextures(1,new int[]{slot.getValue().texture},0);slots.remove();}}
+        if(frame.backdrop==null&&backdropTexture!=0){GLES20.glDeleteTextures(1,new int[]{backdropTexture},0);backdropTexture=0;loadedBackdrop=null;}
         if(offscreen)ensureFbo(width,height);
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,offscreen?fbo:0);
         GLES20.glViewport(0,0,width,height);
@@ -213,7 +252,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         for(int i=0;i<n;i++)c.drawText(lines[i],256f,first+i*spacing,p);
         return bm;
     }
-    private SpriteTexture source(GpuSceneFrame.Sprite item,boolean export,Runnable refresh){
+    private SpriteTexture source(GpuSceneFrame.Sprite item,boolean export,Runnable refresh,int maxSide){
         SpriteTexture slot=spriteTextures.get(item.id);
         if(slot==null){slot=new SpriteTexture();slot.texture=createTexture();spriteTextures.put(item.id,slot);}
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -233,7 +272,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             if(slot.video!=item.video){slot.video=item.video;slot.version=Long.MIN_VALUE;
                 slot.image=null;slot.textKey=null;}
             if(export){
-                if(!item.video.uploadGpuExport(slot.texture,item.timestampMs,item.startMs))return null;
+                if(!item.video.uploadGpuExport(slot.texture,item.timestampMs,item.startMs,maxSide))return null;
                 cachedSpriteUploads++;
             }else{
                 item.video.requestGpuPreview(item.timestampMs,item.startMs,refresh);
@@ -251,15 +290,12 @@ final class GpuSceneRenderer implements AutoCloseable {
             boolean export,Runnable refresh){
         boolean portrait=scene.effects.portrait;
         if(item.opacity<=0f||item.width<=0f||item.height<=0f)return;
-        SpriteTexture texture=source(item,export,refresh);
+        SpriteTexture texture=source(item,export,refresh,Math.max(width,height));
         if(texture==null)return;
         float[] rect=fittedRect(portrait,width,height);
         float h=portrait?711f:225f;
         GLES20.glEnable(GLES20.GL_BLEND);
-        if(item.blend==1)GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE);
-        else if(item.blend==2)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_COLOR);
-        else if(item.blend==3)GLES20.glBlendFunc(GLES20.GL_DST_COLOR,GLES20.GL_ONE_MINUS_SRC_ALPHA);
-        else GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        premultipliedBlend(item.blend);
         GLES20.glUseProgram(spriteProgram);
         GLES20.glUniform4f(GLES20.glGetUniformLocation(spriteProgram,"uSceneRect"),
                 rect[0],rect[1],rect[2],rect[3]);
@@ -273,6 +309,8 @@ final class GpuSceneRenderer implements AutoCloseable {
         GLES20.glUniform1f(GLES20.glGetUniformLocation(spriteProgram,"uScale"),item.scale);
         GLES20.glUniform1f(GLES20.glGetUniformLocation(spriteProgram,"uDesignH"),h);
         GLES20.glUniform1f(GLES20.glGetUniformLocation(spriteProgram,"uAlpha"),item.opacity);
+        GLES20.glUniform4f(GLES20.glGetUniformLocation(spriteProgram,"uCrop"),item.crop[0],item.crop[1],item.crop[2],item.crop[3]);
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(spriteProgram,"uLocalShape"),item.localShape);
         GLES20.glUniform1f(GLES20.glGetUniformLocation(spriteProgram,"uMaskRadius"),item.maskRadius);
         GLES20.glUniform1i(GLES20.glGetUniformLocation(spriteProgram,"uMask"),item.mask);
         GLES20.glUniform1i(GLES20.glGetUniformLocation(spriteProgram,"uPolyCount"),item.polygon.length/2);
@@ -303,11 +341,51 @@ final class GpuSceneRenderer implements AutoCloseable {
                         scene.effects.portrait,batch.toArray(new GpuEffectFrame.Layer[0])),width,height);
                 batch.clear();
             }
-            sprite(item.sprite,scene,width,height,export,refresh);
+            if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);
+            else sprite(item.sprite,scene,width,height,export,refresh);
         }
         if(!batch.isEmpty())count+=particles.draw(new GpuEffectFrame(scene.effects.timestampMs,
                 scene.effects.portrait,batch.toArray(new GpuEffectFrame.Layer[0])),width,height);
         return count;
+    }
+    private static void premultipliedBlend(int mode){
+        if(mode==1)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE);
+        else if(mode==2)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_COLOR);
+        else if(mode==3)GLES20.glBlendFunc(GLES20.GL_DST_COLOR,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        else GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+    }
+    private void visualizer(VisualizerFrame frame,GpuSceneFrame scene,int width,int height,boolean export,Runnable refresh){
+        if(frame.logo!=null)sprite(frame.logo,scene,width,height,export,refresh);
+        GLES20.glEnable(GLES20.GL_BLEND);premultipliedBlend(frame.blend);
+        GLES20.glUseProgram(visualizerProgram);
+        float[] rect=fittedRect(scene.effects.portrait,width,height);float h=scene.effects.portrait?711:225;
+        int p=visualizerProgram;
+        GLES20.glUniform4f(GLES20.glGetUniformLocation(p,"uRect"),rect[0],rect[1],rect[2],rect[3]);
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p,"uShift"),frame.x,frame.y);
+        double angle=Math.toRadians(frame.rotation);
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p,"uRot"),(float)Math.cos(angle),(float)Math.sin(angle));
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(p,"uScale"),frame.scale);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(p,"uDesignH"),h);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(p,"uMaskRadius"),frame.maskRadius);
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(p,"uMask"),frame.mask);
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(p,"uPolyCount"),frame.polygon.length/2);
+        java.util.Arrays.fill(polygons,0);System.arraycopy(frame.polygon,0,polygons,0,Math.min(64,frame.polygon.length));
+        GLES20.glUniform2fv(GLES20.glGetUniformLocation(p,"uPoly[0]"),32,polygons,0);
+        color(p,"uColor",frame.color);color(p,"uAccent",frame.accent);
+        int attr=GLES20.glGetAttribLocation(p,"aPoint");GLES20.glEnableVertexAttribArray(attr);
+        for(int pass=frame.glow>0?2:0;pass>=0;pass--){
+            float widthFactor=pass==0?1:pass==1?3:7;
+            float alpha=frame.opacity*(pass==0?1:frame.glow*(pass==1?.22f:.07f));
+            visualizerMesh.build(frame.style,frame.bands,frame.bars,frame.radius,frame.height,frame.thickness*widthFactor);
+            visualizerBuffer.clear();visualizerBuffer.put(visualizerMesh.vertices,0,visualizerMesh.floats).flip();
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p,"uAlpha"),alpha);
+            GLES20.glVertexAttribPointer(attr,4,GLES20.GL_FLOAT,false,0,visualizerBuffer);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,visualizerMesh.floats/4);
+        }
+        GLES20.glDisableVertexAttribArray(attr);GLES20.glDisable(GLES20.GL_BLEND);
+    }
+    private static void color(int program,String uniform,int value){
+        GLES20.glUniform3f(GLES20.glGetUniformLocation(program,uniform),Color.red(value)/255f,Color.green(value)/255f,Color.blue(value)/255f);
     }
     void spectrum(GpuSceneFrame frame,int width,int height){
         if(!frame.spectrumEnabled)return;
@@ -400,7 +478,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         for(SpriteTexture sprite:spriteTextures.values())if(sprite.texture!=0)
             GLES20.glDeleteTextures(1,new int[]{sprite.texture},0);
         spriteTextures.clear();
-        for(int p:new int[]{bgProgram,artProgram,lineProgram,textProgram,spriteProgram})
+        for(int p:new int[]{bgProgram,artProgram,lineProgram,textProgram,spriteProgram,visualizerProgram})
             if(p!=0)GLES20.glDeleteProgram(p);
         backdropTexture=0;titleTexture=0;loadedBackdrop=null;
     }
