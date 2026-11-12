@@ -278,7 +278,6 @@ public class MainActivity extends Activity {
             spectrum.setText(reactive.isSpectrumEnabled()?"◉ Spectrum ON":"○ Spectrum OFF");
         });
         controls.addView(spectrumControls);
-        addSlider(controls,"Ukuran Spectrum",reactive.getSpectrumScale(),value->reactive.setSpectrumScale(value));
         addSlider(controls,"Camera Shake",reactive.getCameraShake(),value->reactive.setCameraShake(value));
         chromaticSlider=addSlider(controls,"RGB Glitch",reactive.getChromatic(),value->reactive.setPostFx(value,reactive.getVignette()));
         vignetteSlider=addSlider(controls,"Vignette",reactive.getVignette(),value->reactive.setPostFx(reactive.getChromatic(),value));

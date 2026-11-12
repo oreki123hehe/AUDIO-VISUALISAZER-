@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** On-device, audio-driven Canvas compositor with user-reorderable effect layers. */
+/** Audio-time scene model shared by GLES composition and the Canvas compatibility path. */
 public final class ReactiveView extends View {
     public interface AudioClock { long positionMs(); boolean playing(); }
     public static final int DUST=0, FIRE=1, RAIN=2, WATER=3, SMOKE=4,
@@ -115,8 +115,7 @@ public final class ReactiveView extends View {
     private boolean inExportFrame=false;
     private boolean gpuPreviewActive=false;
     private GpuFrameListener gpuFrameListener;
-    /** In the GLES preview path Canvas only composites background/image/video/text.
-     * All ten built-in FX types are rendered by GpuParticleRenderer, on a transparent Surface. */
+    /** Published scene snapshots are drawn in their configured order by the GLES compositor. */
     public interface GpuFrameListener {void onGpuFrame(GpuSceneFrame frame);}
     public void setGpuFrameListener(GpuFrameListener listener) {gpuFrameListener=listener;}
     public void setGpuPreviewActive(boolean active) {gpuPreviewActive=active;projectChanged();}
@@ -784,7 +783,10 @@ public final class ReactiveView extends View {
                         Math.min(animated(i,AutomationParameters.MIN_HZ),animated(i,AutomationParameters.MAX_HZ)),
                         Math.max(animated(i,AutomationParameters.MIN_HZ),animated(i,AutomationParameters.MAX_HZ)));
             case 6:return live.mids;
-            default:return 0;
+            default:
+                AudioAnalyzer.Track stem=signalTrack(src);
+                if(src>=7&&stem!=null){AudioAnalyzer.Features f=stem.at(position);return Math.max(f.bass,Math.max(f.mids,f.highs));}
+                return 0;
         }
     }
     @Override protected void onDraw(Canvas canvas) {
@@ -966,7 +968,7 @@ public final class ReactiveView extends View {
             double angle=Math.toRadians(rotation);
             float logoX=x-(float)Math.sin(angle)*logoOffset*scale,logoY=y+(float)Math.cos(angle)*logoOffset*scale;
             logo=new GpuSceneFrame.Sprite(id,IMAGE,image,null,null,Color.WHITE,framePositionMs,0,
-                    diameter,diameter,opacity(id),logoX,logoY,scale,rotation,blend[id],mask[id],maskRadius[id]/100f,poly);
+                    diameter,diameter,opacity(id),logoX,logoY,scale,rotation,blend[id],mask[id],animated(id,AutomationParameters.MASK_RADIUS)/100f,poly);
             logo.crop=GpuSceneMath.centerCrop(image.getWidth(),image.getHeight(),1f);
             logo.localShape=logoShape[id]==0?(VisualizerMesh.circular(visualizerStyle[id])?1:2):logoShape[id];
         }

@@ -4,7 +4,7 @@ package com.ranneki.visualizer;
  * Coordinates are local design pixels; each vertex contains x, y, gradient position, edge. */
 final class VisualizerMesh {
     static final String[] STYLES={"Ring Spectrum", "Ring Wave", "Spectrum Bars",
-            "Mirror Bars", "Waveform", "Orbit Flower"};
+            "Mirror Bars", "Wave Spectrum", "Orbit Flower"};
     final float[] vertices=new float[128*18*4];
     int floats;
     static boolean circular(int style){return style==0||style==1||style==5;}

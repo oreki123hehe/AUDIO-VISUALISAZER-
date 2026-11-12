@@ -7,7 +7,7 @@ Native offline Android music-visual editor. Version `0.10.0-studio-beta` replace
 1. Import the original soundtrack using **Lagu**.
 2. Select **Template**: Neon Pulse, Montagem Impact, Dual Frequency, Cinematic Orbit, Clean Bars or Flow Waves. Templates assign separate audio responses, preserve the first existing logo and support Undo.
 3. Tap **Logo** and choose its visualizer. The image is center-cropped to a circle, rounded square or square and follows that element's motion.
-4. Use **+ Visualizer** for Ring Spectrum, Ring Wave, Spectrum Bars, Mirror Bars, Waveform or Orbit Flower. Each has independent gradient colors, glow, frequency bounds, transforms and timeline range.
+4. Use **+ Visualizer** for Ring Spectrum, Ring Wave, Spectrum Bars, Mirror Bars, Wave Spectrum or Orbit Flower. Each has independent gradient colors, glow, frequency bounds, transforms and timeline range.
 5. Export MP4. **Proyek & Alat** contains GPU PNG, portable project ZIP, JSON presets, custom GLSL and diagnostics.
 
 The limit is **48 total layers**, shared between visualizers, built-in FX, text, images and muted video. Advanced controls are created only when opened.
@@ -20,7 +20,7 @@ Envelopes are evaluated in source-audio time and cached: seeking or changing pre
 
 **Audio Terpisah** accepts four optional local stem files: vocal, drums, bass and melody. They must already be separated and share the soundtrack's starting timestamp. Stems drive visuals independently; only the original soundtrack is muxed into MP4. Stem audio and attached logos travel inside portable ZIP projects.
 
-FFT bands and onset estimates are not isolated instruments. Automatic separation of a mixed song into clean stems is **not implemented**. The Waveform style is a frequency contour, not a PCM oscilloscope.
+FFT bands and onset estimates are not isolated instruments. Automatic separation of a mixed song into clean stems is **not implemented**. The Wave Spectrum style is a frequency contour, not a PCM oscilloscope.
 
 ## Rendering and editing
 
