@@ -104,8 +104,10 @@ public final class SmokeTestActivity extends Activity {
                         br+=android.graphics.Color.red(bottom);bb+=android.graphics.Color.blue(bottom);n++;
                     }
                     if(n==0 || tr<=tb+12L*n || bb<=br+12L*n)
-                        throw new IllegalStateException("GPU FBO pixels black/inverted; top red "+tr+
-                                "/"+tb+" bottom blue "+bb+"/"+br);
+                        throw new IllegalStateException("GPU FBO pixels black/inverted; decoded="+decoded.getWidth()+"x"+decoded.getHeight()+
+                                " samples="+n+" top red "+tr+"/"+tb+" bottom blue "+bb+"/"+br+
+                                " center top "+Integer.toHexString(decoded.getPixel(decoded.getWidth()/2,decoded.getHeight()/6))+
+                                " center bottom "+Integer.toHexString(decoded.getPixel(decoded.getWidth()/2,decoded.getHeight()*4/5)));
                 }finally{decoded.recycle();}
             }finally{pixels.release();}
 
