@@ -141,7 +141,7 @@ for yy in range(64):
     for xx in range(31,34):
         for ch in range(4):data[(yy*64+xx)*4+ch]=255
 upload(0x0DE1,0,0x1908,64,64,0,0x1908,0x1401,C.cast(data,P))
-int_uni('uType',6);uni('uAmount',1);uni('uPrevious',-40,0,1,0);draw(5,0,4)
+int_uni('uType',100);uni('uAmount',1);uni('uPrevious',-40,0,1,0);draw(5,0,4)
 assert pixel(27,32)[3]>10 and pixel(45,32)[3]==0, ('Motion blur direction',pixel(27,32),pixel(45,32))
 print('PASS: geometric logo masks, neutral filters, saturation and transform-based motion-blur trail')
 print('PASS: real GLES shader orientation, premultiplied blending, opacity, logo crop and visualizer shaders')

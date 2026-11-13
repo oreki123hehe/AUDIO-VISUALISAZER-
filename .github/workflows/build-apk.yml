@@ -11,6 +11,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Restore offline source separation models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/separation
+          key: umxhq-onnx-v1-${{ hashFiles('tools/prepare_separation.py') }}
+      - name: Prepare and verify bundled offline models
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv build-model-env
+          build-model-env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          build-model-env/bin/pip install onnx==1.17.0 onnxruntime==1.20.1 numpy
+          build-model-env/bin/python tools/prepare_separation.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -29,9 +42,9 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan,GpuSceneMath,AudioRoute,VisualizerMesh,SceneHistory,MotionCurve,MotionStyle,LayerFilter}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest,GpuSceneMathTest,AudioRouteTest,VisualizerMeshTest,SceneHistoryTest,MotionCurveTest,MotionStyleTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest GpuSceneMathTest AudioRouteTest VisualizerMeshTest SceneHistoryTest MotionCurveTest MotionStyleTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan,GpuSceneMath,AudioRoute,VisualizerMesh,SceneHistory,MotionCurve,MotionStyle,LayerFilter,DrawnPath,ClipTiming,CameraRig,SongSections}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest,GpuSceneMathTest,AudioRouteTest,VisualizerMeshTest,SceneHistoryTest,MotionCurveTest,MotionStyleTest,StudioGeometryTest,ClipTimingTest,SongSectionsTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest GpuSceneMathTest AudioRouteTest VisualizerMeshTest SceneHistoryTest MotionCurveTest MotionStyleTest StudioGeometryTest ClipTimingTest SongSectionsTest; do
             java -ea -cp build/pure-tests com.ranneki.visualizer.$test
           done
       - name: Verify GPU pixels and alpha blending

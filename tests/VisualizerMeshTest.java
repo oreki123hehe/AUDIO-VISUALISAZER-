@@ -18,6 +18,6 @@ public final class VisualizerMeshTest {
             if(mesh.floats>VisualizerMesh.MAX_FLOATS)throw new AssertionError("Peak-density overflow");
         }
         if(VisualizerMesh.sample(new float[]{0,1},.5f)!=.5f)throw new AssertionError("Band interpolation");
-        System.out.println("PASS: 24 deterministic spectrum styles, bounded triangle mesh and interpolation");
+        System.out.println("PASS: 29 deterministic visualizer styles, bounded triangle mesh and interpolation");
     }
 }

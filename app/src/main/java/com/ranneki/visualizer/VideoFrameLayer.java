@@ -39,9 +39,11 @@ final class VideoFrameLayer implements Closeable {
         }catch(Exception ignored){}
         sourceWidth=Math.max(2,width);sourceHeight=Math.max(2,height);
     }
+    private volatile ClipTiming timing=new ClipTiming();
+    void setTiming(ClipTiming value){timing=ClipTiming.decode(value.encode());cachedMs=-1;}
+    long duration(){return durationMs;}
     private long wrapped(long projectMs,long layerStartMs) {
-        long offset=Math.max(0L,projectMs-layerStartMs);
-        return durationMs<=0?0:offset%durationMs;
+        return timing.sourceAt(projectMs,layerStartMs,durationMs);
     }
     int width(){return sourceWidth;}
     int height(){return sourceHeight;}

@@ -80,6 +80,7 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
             new Handler(Looper.getMainLooper()).post(()->scene.setGpuPreviewActive(false));
         }
     }
+    void resetMetrics(){frames.set(0);drawNs.set(0);points.set(0);}
     String report(){
         long n=frames.get();
         return "GLES GPU particles: "+(available?"active":"inactive")+" | "+rendererName+

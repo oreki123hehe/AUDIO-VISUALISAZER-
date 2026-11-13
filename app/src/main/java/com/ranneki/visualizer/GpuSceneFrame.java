@@ -13,6 +13,7 @@ final class GpuSceneFrame {
     final float kick, bass, snare,treble,shakeX, shakeY;
     final String fragmentShader;
     final Item[] drawOrder;
+    GpuSceneFrame[] shutter=new GpuSceneFrame[0];
     float chromatic=.35f,vignette=.22f;
     GpuSceneFrame(GpuEffectFrame effects, Bitmap backdrop, float[] spectrum,
             boolean fastPath, boolean spectrumEnabled, int spectrumScale, float kick, float bass,
@@ -30,8 +31,9 @@ final class GpuSceneFrame {
         this.drawOrder=drawOrder.clone();
     }
     static final class Item {
-        MotionStyle.Pose pose,previousPose;float motionBlur;
+        MotionStyle.Pose pose,previousPose;float motionBlur,feather;
         float[] filters=new float[0];
+        int id(){return effect!=null?effect.id:sprite!=null?sprite.id:visualizer.id;}
         int blend(){return effect!=null?effect.blend:sprite!=null?sprite.blend:visualizer.blend;}
         final GpuEffectFrame.Layer effect;
         final Sprite sprite;

@@ -3,13 +3,13 @@ package com.ranneki.visualizer;
 /** Shared bounded triangle geometry. Existing style IDs remain stable for old projects. */
 final class VisualizerMesh {
     static final String[] STYLES={"Ring Spectrum","Ring Wave","Spectrum Bars","Mirror Bars","Wave Spectrum","Orbit Flower",
-        "Dotted Ring","Twin Rings","Spiral","Sunburst","Petal Loop","Square","Diamond","Triangle","Hexagon","Star","Heart","Infinity","Arc Spectrum","Dot Matrix","LED Columns","Ribbon","Radial Ticks","Lissajous"};
+        "Dotted Ring","Twin Rings","Spiral","Sunburst","Petal Loop","Square","Diamond","Triangle","Hexagon","Star","Heart","Infinity","Arc Spectrum","Dot Matrix","LED Columns","Ribbon","Radial Ticks","Lissajous","PCM Waveform","PCM Stereo","Stereo L / R","Drawn Spectrum","Morph Spectrum"};
     static final String[] GROUPS={"Ring & orbit","Bars & waves","Geometry & symbols"};
     static final int MAX_FLOATS=128*16*6*4;
     final float[] vertices=new float[MAX_FLOATS];int floats;
     static boolean circular(int style){return style==0||style==1||style==5||style==6||style==7||style==9||style==10||(style>=11&&style<=16)||style==22;}
     static int logoShape(int style){switch(style){case 11:return 3;case 12:return 6;case 13:return 4;case 14:return 5;case 15:return 8;case 16:return 7;default:return circular(style)?1:2;}}
-    static int group(int s){return s>=11&&s<=17||s==23?2:s==2||s==3||s==4||s==19||s==20||s==21?1:0;}
+    static int group(int s){return s>=11&&s<=17||s==23?2:s==2||s==3||s==4||s==19||s==20||s==21||s>=24&&s<=26?1:s>=27?2:0;}
     static float sample(float[] bands,float t){
         if(bands.length==0)return 0;float x=Math.max(0,Math.min(1,t))*(bands.length-1);int a=(int)x,b=Math.min(a+1,bands.length-1);
         return Math.max(0,Math.min(1,bands[a]+(bands[b]-bands[a])*(x-a)));
@@ -25,7 +25,20 @@ final class VisualizerMesh {
         float r0=radius*(style==15&&(i%2==1)?.48f:1),r1=radius*(style==15&&((i+1)%2==1)?.48f:1);
         return new float[]{(float)(Math.cos(a0)*r0*(1-k)+Math.cos(a1)*r1*k),(float)(Math.sin(a0)*r0*(1-k)+Math.sin(a1)*r1*k)};
     }
+    void build(int style,float[] bands,float[] right,float[] path,int bars,float radius,float height,float thickness){
+        if(style<24){build(style,bands,bars,radius,height,thickness);return;}
+        floats=0;int n=Math.max(16,Math.min(128,bars));
+        for(int i=0;i<n-1;i++){float t=i/(float)(n-1),next=(i+1)/(float)(n-1),x=(t-.5f)*radius*3.5f,nx=(next-.5f)*radius*3.5f;
+            if(style==24||style==25){int channels=style==25?2:1;for(int ch=0;ch<channels;ch++){float[] wave=ch==1?right:bands;float y=sampleSigned(wave,t)*height+(channels==2?(ch==0?-1:1)*radius*.5f:0),ny=sampleSigned(wave,next)*height+(channels==2?(ch==0?-1:1)*radius*.5f:0);segment(x,y,nx,ny,thickness,t);}}
+            else if(style==26){segment(x,-3,x,-3-sample(bands,t)*height,thickness,t);segment(x,3,x,3+sample(right,t)*height,thickness,1-t);}
+            else {int count=path.length/2;if(count<2)continue;int k=Math.min(count-2,(int)(t*(count-1)));float p=t*(count-1)-k,px=path[k*2]+(path[k*2+2]-path[k*2])*p,py=path[k*2+1]+(path[k*2+3]-path[k*2+1])*p;
+                float dx=path[k*2+2]-path[k*2],dy=path[k*2+3]-path[k*2+1],len=Math.max(.00001f,(float)Math.hypot(dx,dy));float v=2+sample(bands,t)*height;
+                segment(px*radius*2,py*radius*2,px*radius*2-dy/len*v,py*radius*2+dx/len*v,thickness,t);}
+        }
+    }
+    static float sampleSigned(float[] values,float t){if(values.length==0)return 0;float x=t*(values.length-1);int a=Math.min(values.length-1,(int)x),b=Math.min(a+1,values.length-1);return values[a]+(values[b]-values[a])*(x-a);}
     void build(int style,float[] bands,int bars,float radius,float height,float thickness){
+        if(style>=24){build(style,bands,bands,new float[]{-.8f,.3f,-.4f,-.4f,.4f,.4f,.8f,-.3f},bars,radius,height,thickness);return;}
         floats=0;bars=Math.max(16,Math.min(128,bars));radius=Math.max(1,radius);height=Math.max(0,height);thickness=Math.max(.1f,thickness);
         if(style==19)bars=Math.min(32,bars);if(style==20)bars=Math.min(48,bars);
         for(int i=0;i<bars;i++){

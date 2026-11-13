@@ -2,6 +2,10 @@ package com.ranneki.visualizer;
 
 /** In-place radix-2 forward FFT; no external libraries or native dependencies. */
 final class Fft {
+    static void inverse(float[] re,float[] im){
+        for(int i=0;i<im.length;i++)im[i]=-im[i];forward(re,im);
+        for(int i=0;i<re.length;i++){re[i]/=re.length;im[i]=-im[i]/re.length;}
+    }
     static void forward(float[] re,float[] im) {
             int n=re.length;
             for(int i=1,j=0;i<n;i++) {

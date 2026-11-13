@@ -342,19 +342,28 @@ final class GpuSceneRenderer implements AutoCloseable {
             boolean export,Runnable refresh){
         int count=0;
         for(GpuSceneFrame.Item item:scene.drawOrder){
-            boolean post=item.filters.length>0||item.motionBlur>0;
+            boolean temporal=item.motionBlur>0&&scene.shutter.length>0&&(item.sprite==null||item.sprite.video==null);
+            boolean post=item.filters.length>0||item.motionBlur>0||item.feather>0;
             if(post){if(layerFilters==null)layerFilters=new GpuLayerFilters();layerFilters.start(width,height);}
             isolating=post;
             try{
-                if(item.effect!=null){GpuEffectFrame.Layer f=item.effect;
-                    if(post)f=new GpuEffectFrame.Layer(f.id,f.type,0,f.mask,f.particleCount,f.power,f.opacity,f.size,f.speed,f.shiftX,f.shiftY,f.scale,f.rotation,f.direction,f.maskRadius,f.polygon.length==0?null:f.polygon);
-                    count+=particles.draw(new GpuEffectFrame(scene.effects.timestampMs,scene.effects.portrait,new GpuEffectFrame.Layer[]{f}),width,height);
-                }else if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);
-                else sprite(item.sprite,scene,width,height,export,refresh);
+                if(temporal){layerFilters.beginTemporal();
+                    for(int j=0;j<scene.shutter.length+1;j++){
+                        GpuSceneFrame sample=j==0?scene:scene.shutter[j-1];GpuSceneFrame.Item part=null;
+                        for(GpuSceneFrame.Item candidate:sample.drawOrder)if(candidate.id()==item.id()){part=candidate;break;}
+                        layerFilters.sample();if(part!=null)count+=drawItem(part,sample,particles,width,height,export,refresh,true);
+                        float weight=j==0?1-item.motionBlur*2f/3f:item.motionBlur/3f;layerFilters.accumulate(item,sample,weight);
+                    }
+                }else count+=drawItem(item,scene,particles,width,height,export,refresh,post);
             }finally{isolating=false;}
             if(post)layerFilters.finish(item,scene);
         }
         return count;
+    }
+    private int drawItem(GpuSceneFrame.Item item,GpuSceneFrame scene,GpuParticleRenderer particles,int width,int height,boolean export,Runnable refresh,boolean isolated){
+        if(item.effect!=null){GpuEffectFrame.Layer f=item.effect;if(isolated)f=new GpuEffectFrame.Layer(f.id,f.type,0,f.mask,f.particleCount,f.power,f.opacity,f.size,f.speed,f.shiftX,f.shiftY,f.scale,f.rotation,f.direction,f.maskRadius,f.polygon.length==0?null:f.polygon);
+            return particles.draw(new GpuEffectFrame(scene.effects.timestampMs,scene.effects.portrait,new GpuEffectFrame.Layer[]{f}),width,height);}
+        if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);else sprite(item.sprite,scene,width,height,export,refresh);return 0;
     }
     private void premultipliedBlend(int mode){
         if(isolating)mode=0;
@@ -385,7 +394,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         for(int pass=frame.glow>0?2:0;pass>=0;pass--){
             float widthFactor=pass==0?1:pass==1?3:7;
             float alpha=frame.opacity*(pass==0?1:frame.glow*(pass==1?.22f:.07f));
-            visualizerMesh.build(frame.style,frame.bands,frame.bars,frame.radius,frame.height,frame.thickness*widthFactor);
+            visualizerMesh.build(frame.style,frame.bands,frame.right,frame.path,frame.bars,frame.radius,frame.height,frame.thickness*widthFactor);
             visualizerBuffer.clear();visualizerBuffer.put(visualizerMesh.vertices,0,visualizerMesh.floats).flip();
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p,"uAlpha"),alpha);
             GLES20.glVertexAttribPointer(attr,4,GLES20.GL_FLOAT,false,0,visualizerBuffer);

@@ -43,6 +43,7 @@ public final class SmokeTestActivity extends Activity {
         File wav=new File(getFilesDir(),"smoke-2sec.wav");
         File mp4=new File(getFilesDir(),"smoke-2sec.mp4");
         try {
+            String studioChecks=StudioFeatureSmoke.run(this);
             writeWav(wav,2,44100);
             AudioAnalyzer.Track track=AudioAnalyzer.analyze(this,Uri.fromFile(wav));
             verifyReactiveStudio(track,Uri.fromFile(wav));
@@ -172,7 +173,7 @@ public final class SmokeTestActivity extends Activity {
                 if(!layered.exists()||layered.length()<4096)
                     throw new IllegalStateException("GPU media compositor output is empty");
             }finally{layered.delete();scene.closeVideoLayers();}
-            return "H264/AAC + 24 visualizers + easing/motion/filters/parenting + logo/stem ZIP + mixed GPU layers: "+
+            return studioChecks+"; H264/AAC + 29 visualizers + easing/motion/filters/parenting + logo/stem ZIP + mixed GPU layers: "+
                     mp4.length()+" bytes; "+stats;
         }finally {wav.delete();mp4.delete();}
     }

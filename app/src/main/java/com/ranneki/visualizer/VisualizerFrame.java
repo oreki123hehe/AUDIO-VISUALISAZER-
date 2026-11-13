@@ -5,6 +5,7 @@ final class VisualizerFrame {
     final int id,style,bars,color,accent,blend,mask;
     final float radius,height,thickness,glow,opacity,x,y,scale,rotation,maskRadius;
     final float[] bands,polygon;
+    float[] right=new float[0],path=new float[0];
     final GpuSceneFrame.Sprite logo;
     VisualizerFrame(int id,int style,int bars,int color,int accent,int blend,int mask,
             float radius,float height,float thickness,float glow,float opacity,float x,float y,

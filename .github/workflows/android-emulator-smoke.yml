@@ -12,6 +12,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Restore offline source separation models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/separation
+          key: umxhq-onnx-v1-${{ hashFiles('tools/prepare_separation.py') }}
+      - name: Prepare and verify bundled offline models
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv build-model-env
+          build-model-env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          build-model-env/bin/pip install onnx==1.17.0 onnxruntime==1.20.1 numpy
+          build-model-env/bin/python tools/prepare_separation.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -49,7 +62,7 @@ jobs:
             gradle :app:assembleDebug --stacktrace --no-daemon
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -n com.ranneki.visualizer/.SmokeTestActivity
-            for attempt in $(seq 1 90); do if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
+            for attempt in $(seq 1 450); do if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
             adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
             grep '^PASS:' smoke-result.txt
             adb shell am start -W -n com.ranneki.visualizer/.MainActivity

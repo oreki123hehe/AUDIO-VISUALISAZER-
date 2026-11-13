@@ -25,8 +25,8 @@ public final class ReactiveView extends View {
     public static final int DUST=0, FIRE=1, RAIN=2, WATER=3, SMOKE=4,
             SNOW=5, SPARKS=6, LIGHTNING=7, GLOW=8, GLITCH=9;
     public static final int EFFECT_COUNT=10;
-    public static final int TEXT=10, IMAGE=11, VIDEO=12, VISUALIZER=13;
-    public static final int LAYER_TYPE_COUNT=14;
+    public static final int TEXT=10, IMAGE=11, VIDEO=12, VISUALIZER=13, CONTROL=14;
+    public static final int LAYER_TYPE_COUNT=15;
     public static final String[] EFFECT_NAMES={
             "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
             "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
@@ -34,10 +34,10 @@ public final class ReactiveView extends View {
     public static final String[] LAYER_NAMES={
             "Debu • Dust", "Api • Fire", "Hujan • Rain", "Air • Ripple",
             "Asap • Smoke", "Salju • Snow", "Percikan • Sparks", "Petir • Lightning",
-            "Cahaya • Glow", "Distorsi • Glitch", "Judul • Text", "Gambar • Image", "Video • Clip (tanpa audio)", "Visualizer • Spectrum"};
+            "Cahaya • Glow", "Distorsi • Glitch", "Judul • Text", "Gambar • Image", "Video • Clip (tanpa audio)", "Visualizer • Spectrum", "Kontrol • Null"};
     public static final String[] SOURCES={"Kick", "Bass", "Kick + Bass", "Treble",
-            "Snare", "Frekuensi custom", "Mid", "Vokal • stem", "Drum • stem", "Bass • stem", "Melodi • stem"};
-    public static final String[] STEM_NAMES={"Vokal", "Drum", "Bass", "Melodi"};
+            "Snare", "Frekuensi custom", "Mid", "Vokal • stem", "Drum • stem", "Bass • stem", "Instrumen lain • stem"};
+    public static final String[] STEM_NAMES={"Vokal", "Drum", "Bass", "Instrumen lain"};
     public static final String[] PROPERTY_NAMES={"Ukuran", "Jumlah", "Kecepatan", "Opacity"};
     public static final String[] BLEND_NAMES={"Normal", "Add", "Screen", "Multiply"};
     public static final String[] MASK_NAMES={"Tanpa mask", "Lingkaran", "Atas", "Bawah", "Polygon custom"};
@@ -95,6 +95,35 @@ public final class ReactiveView extends View {
     private final float[][] animatedValues=new float[MAX_LAYERS][AutomationParameters.COUNT];
     private final MotionStyle[] motion=new MotionStyle[MAX_LAYERS];
     private final int[] parentLayer=new int[MAX_LAYERS];
+    private final LayerAdvanced[] advanced=new LayerAdvanced[MAX_LAYERS];
+    private CameraRig camera=new CameraRig();
+    private SongSections sections=new SongSections();
+    public LayerAdvanced getAdvanced(int id){return advanced[id].copy();}
+    public void setAdvanced(int id,LayerAdvanced a){advanced[id]=a.copy();if(videoSources[id]!=null)videoSources[id].setTiming(a.clip);projectChanged();}
+    public CameraRig getCamera(){return CameraRig.decode(camera.encode());}
+    public void setCamera(CameraRig c){camera=CameraRig.decode(c.encode());projectChanged();}
+    public SongSections getSections(){return SongSections.decode(sections.encode());}
+    public void setSections(SongSections s){sections=SongSections.decode(s.encode());projectChanged();}
+    public void arrangeAll(boolean on){for(int id:layerOrder)advanced[id].autoArrange=on;projectChanged();}
+    public void editTransform(int id,int param,int value,long ms){
+        if(keyframeCount(id,param)>0)setKeyframe(id,param,ms,value);
+        else if(param==AutomationParameters.X)setLayerX(id,value);else if(param==AutomationParameters.Y)setLayerY(id,value);
+        else if(param==AutomationParameters.SCALE)setLayerScale(id,value);else if(param==AutomationParameters.ROTATION)setLayerRotation(id,value);
+    }
+    public int splitLayer(int id,long ms){
+        if(ms<=startTimeMs[id]||ms>=endTimeMs[id])return -1;long end=endTimeMs[id];int next=duplicateLayer(id);if(next<0)return -1;
+        advanced[next].clip.offsetMs=advanced[id].clip.offsetMs+(long)((ms-startTimeMs[id])*advanced[id].clip.speed);
+        advanced[id].clip.fadeOut=0;advanced[next].clip.fadeIn=0;
+        setLayerEnd(id,ms);setLayerStart(next,ms);setLayerEnd(next,end);
+        if(videoSources[id]!=null)videoSources[id].setTiming(advanced[id].clip);if(videoSources[next]!=null)videoSources[next].setTiming(advanced[next].clip);projectChanged();return next;
+    }
+    public boolean joinLayer(int id){int at=layerOrder.indexOf(id);if(at<0||at+1>=layerOrder.size())return false;int next=layerOrder.get(at+1);
+        if(layerType[next]!=layerType[id]||startTimeMs[next]!=endTimeMs[id]||!java.util.Objects.equals(videoUri[next],videoUri[id])||!java.util.Objects.equals(imageUri[next],imageUri[id]))return false;
+        if(Math.abs(advanced[next].clip.speed-advanced[id].clip.speed)>.001||!java.util.Objects.equals(layerText[next],layerText[id]))return false;
+        if(offsetX[next]!=offsetX[id]||offsetY[next]!=offsetY[id]||layerScale[next]!=layerScale[id]||layerRotation[next]!=layerRotation[id]||opacity[next]!=opacity[id]||blend[next]!=blend[id]||mask[next]!=mask[id]||!motion[next].encode().equals(motion[id].encode()))return false;
+        if(advanced[next].clip.inMs!=advanced[id].clip.inMs||advanced[next].clip.outMs!=advanced[id].clip.outMs||advanced[next].clip.loop!=advanced[id].clip.loop)return false;
+        endTimeMs[id]=endTimeMs[next];advanced[id].clip.outMs=advanced[next].clip.outMs;advanced[id].clip.fadeOut=advanced[next].clip.fadeOut;removeLayer(next);if(videoSources[id]!=null)videoSources[id].setTiming(advanced[id].clip);projectChanged();return true;
+    }
     @SuppressWarnings("unchecked") private final ArrayList<LayerFilter>[] filters=(ArrayList<LayerFilter>[])new ArrayList<?>[MAX_LAYERS];
     public MotionStyle getMotion(int id){return motion[id].copy();}
     public void setMotion(int id,MotionStyle value){motion[id]=MotionStyle.decode(value.encode());projectChanged();}
@@ -105,7 +134,7 @@ public final class ReactiveView extends View {
         parentLayer[id]=parent;projectChanged();return true;
     }
     public LayerFilter[] getFilters(int id){LayerFilter[] a=new LayerFilter[filters[id].size()];for(int i=0;i<a.length;i++)a[i]=filters[id].get(i).copy();return a;}
-    public void setFilters(int id,LayerFilter[] value){if(value.length>LayerFilter.MAX)throw new IllegalArgumentException("Maximum six filters");
+    public void setFilters(int id,LayerFilter[] value){if(value.length>LayerFilter.MAX)throw new IllegalArgumentException("Maximum 12 filters");
         ArrayList<LayerFilter> copy=new ArrayList<>();for(LayerFilter f:value)copy.add(f.copy());filters[id]=copy;projectChanged();}
     public MotionCurve getCurve(int id,int parameter,long ms){return automation[id][parameter].curveAt(ms);}
     public boolean setCurve(int id,int parameter,long ms,MotionCurve curve,boolean all){
@@ -121,7 +150,7 @@ public final class ReactiveView extends View {
     private final java.util.LinkedHashMap<Long,MotionStyle.Pose[]> poseCache=new java.util.LinkedHashMap<Long,MotionStyle.Pose[]>(4,.75f,true){
         protected boolean removeEldestEntry(java.util.Map.Entry<Long,MotionStyle.Pose[]> entry){return size()>2;}
     };
-    MotionStyle.Pose poseAt(int id,long ms){return poseAt(id,ms,0);}
+    MotionStyle.Pose poseAt(int id,long ms){float depth=0;for(int p=id,n=0;p>=0&&n<MAX_LAYERS;p=parentLayer[p],n++)depth+=advanced[p].depth;return camera.project(poseAt(id,ms,0),depth);}
     private MotionStyle.Pose poseAt(int id,long ms,int depth){
         MotionStyle.Pose[] cached=poseCache.get(ms);if(cached==null){cached=new MotionStyle.Pose[MAX_LAYERS];poseCache.put(ms,cached);}
         if(cached[id]!=null)return cached[id];
@@ -130,6 +159,11 @@ public final class ReactiveView extends View {
             (valueAt(id,AutomationParameters.Y,ms)-50)*(portrait?711f:225f)/100f,
             .25f+valueAt(id,AutomationParameters.SCALE,ms)*.015f,(valueAt(id,AutomationParameters.ROTATION,ms)-50)*3.6f);
         p=m.apply(p,ms-startTimeMs[id],signal);
+        LayerAdvanced a=advanced[id];
+        if(a.motionPath!=null){float f=Math.max(0,ms-startTimeMs[id])%(long)a.pathDuration/(float)a.pathDuration;float[] point=a.motionPath.at(f),origin=a.motionPath.at(0);
+            p=new MotionStyle.Pose(p.x+(point[0]-origin[0])*180,p.y+(point[1]-origin[1])*(portrait?320:100),p.scale,p.rotation+(a.followPath?a.motionPath.tangent(f):0));}
+        if(a.autoArrange)p=new MotionStyle.Pose(p.x,p.y,p.scale*(.9f+.1f*sections.intensity(ms)),p.rotation);
+        p=CameraRig.pivot(p,a.pivotX,a.pivotY);
         cached[id]=parentLayer[id]>=0&&depth<MAX_LAYERS?poseAt(parentLayer[id],ms,depth+1).child(p):p;return cached[id];
     }
     private MotionStyle.Pose cameraPose(MotionStyle.Pose p,long ms){
@@ -137,6 +171,7 @@ public final class ReactiveView extends View {
         return new MotionStyle.Pose(p.x+(float)Math.sin(ms*.061)*power,p.y+(float)Math.cos(ms*.073)*power,p.scale,p.rotation);
     }
     private GpuSceneFrame.Item decorate(GpuSceneFrame.Item item,int id){
+        item.feather=advanced[id].feather;
         item.pose=cameraPose(poseAt(id,framePositionMs),framePositionMs);
         long previous=Math.max(startTimeMs[id],framePositionMs-17);item.previousPose=cameraPose(poseAt(id,previous),previous);item.motionBlur=motion[id].blur/100f;
         item.filters=new float[filters[id].size()*2];int n=0;
@@ -213,13 +248,22 @@ public final class ReactiveView extends View {
     }
     /** The GL compositor handles all standard scene types, including camera shake. */
     private boolean gpuOnlyAt(long positionMs) {return true;}
-    private GpuSceneFrame snapshotGpuSceneFrame() {
+    private GpuSceneFrame snapshotGpuSceneFrame(){
+        GpuSceneFrame current=buildGpuSceneFrame();boolean needed=false;
+        for(GpuSceneFrame.Item i:current.drawOrder)if(i.motionBlur>0&&(i.sprite==null||i.sprite.video==null)){needed=true;break;}
+        if(needed){long at=framePositionMs;current.shutter=new GpuSceneFrame[2];
+            for(int i=0;i<2;i++){sampleGpuState(Math.max(0,at-(i+1)*8));current.shutter[i]=buildGpuSceneFrame();}sampleGpuState(at);}
+        return current;
+    }
+    private void sampleGpuState(long ms){framePositionMs=ms;phase=ms/1000f;live=track==null?AudioAnalyzer.Features.zero():track.at(ms);if(track!=null)track.spectrumAt(ms,spectralBins);sampleAutomation(ms);evaluateAudioConnections();}
+    private GpuSceneFrame buildGpuSceneFrame() {
         GpuEffectFrame fx=snapshotGpuFrame();
         java.util.ArrayList<GpuSceneFrame.Item> drawOrder=new java.util.ArrayList<>();
         int h=portrait?711:225;
         for(int id:layerOrder){
             if(!enabled[id] || framePositionMs<startTimeMs[id] || framePositionMs>endTimeMs[id])continue;
             int type=layerType[id];
+            if(type==CONTROL)continue;
             if(type==VISUALIZER){if(spectrumEnabled)drawOrder.add(decorate(new GpuSceneFrame.Item(visualizerFrame(id)),id));continue;}
             if(type<EFFECT_COUNT){
                 for(GpuEffectFrame.Layer effect:fx.layers)
@@ -237,6 +281,7 @@ public final class ReactiveView extends View {
                 float strength=volume(id)*(1f+intensity(id)*.32f);
                 float fit=Math.min(260f*strength/bitmap.getWidth(),h*.55f*strength/bitmap.getHeight());
                 contentWidth=bitmap.getWidth()*fit;contentHeight=bitmap.getHeight()*fit;
+                if(advanced[id].fillCanvas){contentWidth=400;contentHeight=h;}
             }else if(type==TEXT){
                 float fontSize=(12f+volume(id)*20f)*(1f+.45f*intensity(id));
                 contentWidth=Math.min(395f,280f*fontSize/31f);
@@ -253,6 +298,7 @@ public final class ReactiveView extends View {
                     contentWidth,contentHeight,opacity(id),
                     pose.x,pose.y,pose.scale,pose.rotation,
                     blend[id],mask[id],smooth(id,AutomationParameters.MASK_RADIUS)/100f,poly);
+            if(type==IMAGE&&advanced[id].fillCanvas)sprite.crop=GpuSceneMath.centerCrop(bitmap.getWidth(),bitmap.getHeight(),400f/h);
             if(type==VIDEO)sprite.crop=GpuSceneMath.centerCrop(video.width(),video.height(),400f/h);
             drawOrder.add(decorate(new GpuSceneFrame.Item(sprite),id));
         }
@@ -529,7 +575,7 @@ public final class ReactiveView extends View {
         VideoFrameLayer replacement=null;
         if(path!=null&&!path.isEmpty())replacement=new VideoFrameLayer(getContext(),android.net.Uri.parse(path));
         VideoFrameLayer old=videoSources[id];videoSources[id]=replacement;
-        videoUri[id]=path==null?"":path;
+        videoUri[id]=path==null?"":path;if(replacement!=null)replacement.setTiming(advanced[id].clip);
         if(old!=null)old.close();
         projectChanged();
     }
@@ -583,7 +629,7 @@ public final class ReactiveView extends View {
             int[] defaultSources={2,1,4,0,1,3,0,4,2,0};
             source[id]=type<EFFECT_COUNT?defaultSources[type]:2;
             enabled[id]=(type>=EFFECT_COUNT)||type==DUST;
-            motion[id]=new MotionStyle();parentLayer[id]=-1;filters[id]=new ArrayList<>();
+            motion[id]=new MotionStyle();advanced[id]=new LayerAdvanced();parentLayer[id]=-1;filters[id]=new ArrayList<>();
             visualizerStyle[id]=0;accentColor[id]=0xff38d9ef;visualizerGlow[id]=40;logoSize[id]=80;logoShape[id]=0;
             if(type==VISUALIZER){textColor[id]=0xffaa88ff;minHz[id]=25;maxHz[id]=10000;
                 source[id]=1;opacity[id]=100;threshold[id]=0;attackMs[id]=30;releaseMs[id]=200;}
@@ -629,7 +675,7 @@ public final class ReactiveView extends View {
     }
     private void copyParameters(int src,int dst) {
         enabled[dst]=enabled[src];source[dst]=source[src];
-        motion[dst]=motion[src].copy();parentLayer[dst]=parentLayer[src];for(LayerFilter f:filters[src])filters[dst].add(f.copy());
+        advanced[dst]=advanced[src].copy();motion[dst]=motion[src].copy();parentLayer[dst]=parentLayer[src];for(LayerFilter f:filters[src])filters[dst].add(f.copy());
         visualizerStyle[dst]=visualizerStyle[src];accentColor[dst]=accentColor[src];
         visualizerGlow[dst]=visualizerGlow[src];logoSize[dst]=logoSize[src];logoShape[dst]=logoShape[src];
         for(int param=0;param<AutomationParameters.COUNT;param++)audioRoutes[dst][param]=audioRoutes[src][param].copy();
@@ -681,7 +727,7 @@ public final class ReactiveView extends View {
     /** JSON project preset: ordered independent layer instances. */
     public String exportProjectJson() {
         try {
-            JSONObject root=new JSONObject();root.put("version",5);
+            JSONObject root=new JSONObject();root.put("version",6);root.put("camera",camera.encode());root.put("sections",sections.encode());
             root.put("chromatic",chromatic);root.put("vignette",vignette);
             JSONArray stems=new JSONArray();for(String uri:stemUris)stems.put(uri);root.put("stems",stems);
             root.put("portrait",portrait);root.put("eco",economyMode);
@@ -695,7 +741,7 @@ public final class ReactiveView extends View {
                 o.put("visualizerGlow",visualizerGlow[id]);o.put("logoSize",logoSize[id]);o.put("logoShape",logoShape[id]);
                 JSONArray connections=new JSONArray();for(AudioRoute route:audioRoutes[id])connections.put(route.encode());
                 o.put("audioConnections",connections);
-                o.put("motion",motion[id].encode());o.put("parent",layerOrder.indexOf(parentLayer[id]));
+                o.put("advanced",advanced[id].json());o.put("motion",motion[id].encode());o.put("parent",layerOrder.indexOf(parentLayer[id]));
                 JSONArray fs=new JSONArray();for(LayerFilter f:filters[id])fs.put(f.encode());o.put("filters",fs);
                 o.put("imageUri",imageUri[id]);o.put("videoUri",videoUri[id]);
                 o.put("polygon",polygonEncoded[id]);o.put("textColor",textColor[id]);
@@ -724,12 +770,13 @@ public final class ReactiveView extends View {
             JSONObject root=new JSONObject(json);JSONArray arr=root.getJSONArray("layers");
             if(arr.length()>MAX_LAYERS)return false;
             // Validate before mutating scene: malicious or broken preset must not erase layers.
+            CameraRig parsedCamera=CameraRig.decode(root.optString("camera"));SongSections parsedSections=SongSections.decode(root.optString("sections"));
             String parsedShader=ShaderSource.validate(root.optString("shaderSource",ShaderSource.CLASSIC));
             for(int j=0;j<arr.length();j++){
                 JSONObject o=arr.getJSONObject(j);int type=o.getInt("type");
                 if(type<0||type>=LAYER_TYPE_COUNT)return false;
                 PolygonMask.parse(o.optString("polygon",PolygonMask.DEFAULT));
-                MotionStyle.decode(o.optString("motion",new MotionStyle().encode()));
+                MotionStyle.decode(o.optString("motion",new MotionStyle().encode()));LayerAdvanced.from(o.optJSONObject("advanced"));
                 JSONArray fs=o.optJSONArray("filters");if(fs!=null){if(fs.length()>LayerFilter.MAX)return false;for(int k=0;k<fs.length();k++)LayerFilter.decode(fs.getString(k));}
                 int parent=o.optInt("parent",-1);if(parent < -1||parent>=arr.length()||parent==j)return false;
                 for(int ancestor=parent,count=0;ancestor>=0;count++){
@@ -746,7 +793,7 @@ public final class ReactiveView extends View {
                 int id=addLayer(o.getInt("type"));
                 if(id<0)throw new IllegalStateException("Invalid layer");
                 enabled[id]=o.optBoolean("enabled",true);
-                motion[id]=MotionStyle.decode(o.optString("motion",new MotionStyle().encode()));
+                motion[id]=MotionStyle.decode(o.optString("motion",new MotionStyle().encode()));LayerAdvanced.from(o.optJSONObject("advanced"));
                 JSONArray fs=o.optJSONArray("filters");if(fs!=null)for(int k=0;k<fs.length();k++)filters[id].add(LayerFilter.decode(fs.getString(k)));
                 setLayerName(id,o.optString("name",LAYER_NAMES[layerType[id]]));
                 setLayerText(id,o.optString("text","RANNEKI"));
@@ -759,7 +806,7 @@ public final class ReactiveView extends View {
                 JSONArray connections=o.optJSONArray("audioConnections");
                 if(connections!=null)for(int k=0;k<Math.min(connections.length(),AutomationParameters.COUNT);k++)
                     audioRoutes[id][k].decode(connections.getString(k));
-                setLayerX(id,o.optInt("x",50));setLayerY(id,o.optInt("y",50));
+                setAdvanced(id,LayerAdvanced.from(o.optJSONObject("advanced")));setLayerX(id,o.optInt("x",50));setLayerY(id,o.optInt("y",50));
                 setLayerScale(id,o.optInt("scale",50));setLayerRotation(id,o.optInt("rotation",50));
                 setLayerStart(id,o.optLong("startMs",0));setLayerEnd(id,o.optLong("endMs",Long.MAX_VALUE));
                 setSource(id,o.optInt("source",0));setStrength(id,o.optInt("strength",80));
@@ -783,7 +830,7 @@ public final class ReactiveView extends View {
             setPortrait(root.optBoolean("portrait",true));setEconomyMode(root.optBoolean("eco",true));
             setSpectrumEnabled(root.optBoolean("spectrum",true));
             setSpectrumScale(root.optInt("spectrumScale",55));setCameraShake(root.optInt("cameraShake",0));
-            shaderSource=parsedShader;setPostFx(root.optInt("chromatic",35),root.optInt("vignette",22));
+            camera=parsedCamera;sections=parsedSections;shaderSource=parsedShader;setPostFx(root.optInt("chromatic",35),root.optInt("vignette",22));
             JSONArray stems=root.optJSONArray("stems");
             for(int i=0;i<4;i++){
                 String uri=stems==null?"":stems.optString(i,"");
@@ -1036,9 +1083,18 @@ public final class ReactiveView extends View {
             logo.crop=GpuSceneMath.centerCrop(image.getWidth(),image.getHeight(),1f);
             logo.localShape=logoShape[id]==0?VisualizerMesh.logoShape(visualizerStyle[id]):logoShape[id];
         }
-        return new VisualizerFrame(id,visualizerStyle[id],16+animated(id,AutomationParameters.DENSITY)*112/100,
+        VisualizerFrame frame=new VisualizerFrame(id,visualizerStyle[id],16+animated(id,AutomationParameters.DENSITY)*112/100,
                 textColor[id],accentColor[id],blend[id],mask[id],radius,height,1+smooth(id,AutomationParameters.VELOCITY)*.045f,
                 visualizerGlow[id]/100f,opacity(id),x,y,scale,rotation,smooth(id,AutomationParameters.MASK_RADIUS)/100f,bands,poly,logo);
+        frame.right=new float[bands.length];
+        if(data!=null&&visualizerStyle[id]>=24&&visualizerStyle[id]<=26){
+            if(visualizerStyle[id]<=25){data.pcmAt(framePositionMs,false,bands);data.pcmAt(framePositionMs,true,frame.right);}
+            else{data.stereoAt(framePositionMs,false,bands);data.stereoAt(framePositionMs,true,frame.right);}}
+        LayerAdvanced a=advanced[id];if(a.spectrumPath!=null){float morph=a.morph;AudioAnalyzer.Track t=signalTrack(a.morphSource);
+            if(a.morphSource>=0&&t!=null)morph=t.envelopeAt(framePositionMs,a.morphSource>=7?7:a.morphSource,25,10000,0,40,180);
+            frame.path=DrawnPath.morph(a.spectrumPath,visualizerStyle[id]==28?a.morphPath:null,morph,128);}
+        else frame.path=new float[]{-.8f,.3f,-.4f,-.4f,.4f,.4f,.8f,-.3f};
+        return frame;
     }
     private void drawVisualizerLayer(Canvas canvas,int h,int id){
         VisualizerFrame frame=visualizerFrame(id);
@@ -1053,7 +1109,7 @@ public final class ReactiveView extends View {
                     Math.round(crop[2]*b.getWidth()),Math.round(crop[3]*b.getHeight())),new RectF(-d/2,-d/2,d/2,d/2),p);
             p.setAlpha(255);canvas.restore();
         }
-        canvasMesh.build(frame.style,frame.bands,frame.bars,frame.radius,frame.height,frame.thickness);
+        canvasMesh.build(frame.style,frame.bands,frame.right,frame.path,frame.bars,frame.radius,frame.height,frame.thickness);
         p.setStyle(Paint.Style.FILL);p.setColor(frame.color);p.setAlpha(Math.round(frame.opacity*255));
         Path triangle=new Path();
         for(int i=0;i<canvasMesh.floats;i+=12){triangle.reset();triangle.moveTo(canvasMesh.vertices[i],canvasMesh.vertices[i+1]);
@@ -1096,7 +1152,7 @@ public final class ReactiveView extends View {
         return propertySource[fx][property]<0?0:propertyEnvelope[fx][property];
     }
     private float intensity(int i) {
-        return envelope[i]*smooth(i,AutomationParameters.STRENGTH)/100f;
+        return envelope[i]*smooth(i,AutomationParameters.STRENGTH)/100f*(advanced[i].autoArrange?sections.intensity(framePositionMs):1);
     }
     private float volume(int i) {
         return (.2f+smooth(i,AutomationParameters.SIZE)/100f*1.8f)*(1+parameter(i,0)*1.1f);
@@ -1106,7 +1162,7 @@ public final class ReactiveView extends View {
         return Math.min(1f,animated(i,AutomationParameters.DENSITY)/100f*(economyMode?.62f:1f)*modulation);
     }
     private float opacity(int i) {
-        return smooth(i,AutomationParameters.OPACITY)/100f*(propertySource[i][3]<0?1f:(.20f+parameter(i,3)*.8f));
+        return advanced[i].clip.alpha(framePositionMs,startTimeMs[i],endTimeMs[i])*(advanced[i].autoArrange?Math.min(1,.6f+sections.intensity(framePositionMs)*.4f):1)*smooth(i,AutomationParameters.OPACITY)/100f*(propertySource[i][3]<0?1f:(.20f+parameter(i,3)*.8f));
     }
     private float speed(int i) {
         return (.15f+smooth(i,AutomationParameters.VELOCITY)/100f*2.7f)*(1+parameter(i,2)*2.2f);
