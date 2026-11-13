@@ -113,6 +113,37 @@ int_uni('uLocalShape',0);uni('uCrop',0,0,1,1);tex([64,32,16,128]*16)
 glfn('glEnable',None,U)(0x0BE2);blend(1,0x0303);clear_color(0,0,0,1);clear(0x4000);draw(5,0,4)
 assert pixel(32,32)[:3]==[64,32,16], 'Premultiplied alpha was applied twice'
 shader(0x8B31,java_string('VISUALIZER_VERTEX'));shader(0x8B30,java_string('VISUALIZER_FRAGMENT'))
+# Geometric logo masks must retain center and discard square corners.
+glfn('glDisable',None,U)(0x0BE2);tex([255,255,255,255]*16);uni('uAlpha',1)
+for shape in [1,2,4,5,6,7,8]:
+    int_uni('uLocalShape',shape);clear_color(0,0,0,0);clear(0x4000);draw(5,0,4)
+    assert pixel(32,32)[0]>200, ('Missing logo center',shape)
+    assert pixel(2,2)[3]<20, ('Uncropped logo corner',shape)
+# Execute the actual ordered-filter / motion-blur shader.
+source=(Path(__file__).resolve().parents[1]/'app/src/main/java/com/ranneki/visualizer/GpuLayerFilters.java').read_text()
+v=shader(0x8B31,java_string('VERTEX'));f=shader(0x8B30,java_string('FRAGMENT'))
+p=glfn('glCreateProgram',U)();attach(p,v);attach(p,f);glfn('glLinkProgram',None,U)(p)
+glfn('glGetProgramiv',None,U,U,IP)(p,0x8B82,C.byref(linked));assert linked.value
+glfn('glUseProgram',None,U)(p)
+a=glfn('glGetAttribLocation',I,U,C.c_char_p)(p,b'aPos');vertices=(F*8)(-1,-1,1,-1,-1,1,1,1)
+glfn('glEnableVertexAttribArray',None,U)(a);glfn('glVertexAttribPointer',None,U,I,U,U,I,P)(a,2,0x1406,0,0,C.cast(vertices,P))
+int_uni('uImage',0);uni('uPixel',1/400,1/225);uni('uTime',.3);uni('uDesignH',225);uni('uRect',0,0,1,1)
+uni('uCurrent',0,0,1,0);uni('uPrevious',0,0,1,0)
+tex([64,32,16,128]*16)
+for kind,amount in [(0,0),(2,0),(3,0),(4,.5),(5,.5),(6,1)]:
+    int_uni('uType',kind);uni('uAmount',amount);draw(5,0,4)
+    assert all(abs(a-b)<2 for a,b in zip(pixel(32,32),[64,32,16,128])), ('Neutral filter changed pixels',kind,pixel(32,32))
+int_uni('uType',4);uni('uAmount',0);draw(5,0,4);gray=pixel(32,32)
+assert abs(gray[0]-gray[1])<=1 and abs(gray[1]-gray[2])<=1, gray
+# A thin white bar moving right must leave a left-side exposure trail.
+data=(C.c_ubyte*(64*64*4))()
+for yy in range(64):
+    for xx in range(31,34):
+        for ch in range(4):data[(yy*64+xx)*4+ch]=255
+upload(0x0DE1,0,0x1908,64,64,0,0x1908,0x1401,C.cast(data,P))
+int_uni('uType',6);uni('uAmount',1);uni('uPrevious',-40,0,1,0);draw(5,0,4)
+assert pixel(27,32)[3]>10 and pixel(45,32)[3]==0, ('Motion blur direction',pixel(27,32),pixel(45,32))
+print('PASS: geometric logo masks, neutral filters, saturation and transform-based motion-blur trail')
 print('PASS: real GLES shader orientation, premultiplied blending, opacity, logo crop and visualizer shaders')
 assert glfn('glGetError',U)()==0
 efn('eglMakeCurrent',U,P,P,P,P)(d,None,None,None)

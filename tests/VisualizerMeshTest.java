@@ -13,7 +13,11 @@ public final class VisualizerMeshTest {
             if(!java.util.Arrays.equals(first,java.util.Arrays.copyOf(mesh.vertices,mesh.floats)))
                 throw new AssertionError("Geometry must not depend on playback history");
         }
+        java.util.Arrays.fill(signal,1);for(int style=0;style<VisualizerMesh.STYLES.length;style++){
+            mesh.build(style,signal,128,60,80,3);
+            if(mesh.floats>VisualizerMesh.MAX_FLOATS)throw new AssertionError("Peak-density overflow");
+        }
         if(VisualizerMesh.sample(new float[]{0,1},.5f)!=.5f)throw new AssertionError("Band interpolation");
-        System.out.println("PASS: six deterministic spectrum styles, bounded triangle mesh and interpolation");
+        System.out.println("PASS: 24 deterministic spectrum styles, bounded triangle mesh and interpolation");
     }
 }

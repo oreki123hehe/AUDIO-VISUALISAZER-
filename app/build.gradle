@@ -10,8 +10,8 @@ android {
         applicationId 'com.ranneki.visualizer'
         minSdk 26
         targetSdk 34
-        versionCode 10
-        versionName '0.10.0-studio-beta'
+        versionCode 11
+        versionName '0.11.0-motion-beta'
     }
 
     compileOptions {

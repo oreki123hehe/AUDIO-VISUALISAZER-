@@ -81,6 +81,18 @@ public final class AudioAnalyzer {
             float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
             return lerp(curve[a],curve[b],t);
         }
+        synchronized float motionAt(long ms,int source,int mode,int minHz,int maxHz,int speed){
+            if(mode==0)return envelopeAt(ms,source,minHz,maxHz,0,10,130);
+            if(features.length==0||ms>timestamps[timestamps.length-1]+80)return 0;
+            String key="motion:"+source+":"+mode+":"+minHz+":"+maxHz+":"+speed;float[] curve=envelopes.get(key);
+            if(curve==null){
+                envelopeAt(0,source,minHz,maxHz,0,10,130);
+                float[] input=envelopes.get(source+":"+minHz+":"+maxHz+":0:10:130");
+                curve=MotionStyle.spring(input,timestamps,mode==1?.65f:.38f,16+speed*.5f);envelopes.put(key,curve);
+            }
+            int a=before(ms),b=Math.min(a+1,curve.length-1);float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            return lerp(curve[a],curve[b],t);
+        }
         void spectrumRangeAt(long ms,int minHz,int maxHz,float[] output){
             if(spectrum.length==0){java.util.Arrays.fill(output,0);return;}
             int a=before(ms),b=Math.min(a+1,spectrum.length-1);

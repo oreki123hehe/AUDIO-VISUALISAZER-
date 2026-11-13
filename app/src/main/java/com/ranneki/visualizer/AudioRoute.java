@@ -14,9 +14,10 @@ final class AudioRoute {
             throw new IllegalArgumentException("Audio route outside supported limits");
         source=s;minHz=lo;maxHz=hi;depth=d;attack=a;release=r;
     }
-    int apply(int parameter,int base,float envelope){
+    int apply(int parameter,int base,float envelope){return Math.round(applyFloat(parameter,base,envelope));}
+    float applyFloat(int parameter,float base,float envelope){
         if(source<0)return base;
         float range=AutomationParameters.max(parameter)-AutomationParameters.min(parameter);
-        return AutomationParameters.clamp(parameter,Math.round(base+range*depth*.01f*Math.max(0,Math.min(1,envelope))));
+        return Math.max(AutomationParameters.min(parameter),Math.min(AutomationParameters.max(parameter),base+range*depth*.01f*Math.max(-.35f,Math.min(1.5f,envelope))));
     }
 }

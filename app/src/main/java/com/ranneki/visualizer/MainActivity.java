@@ -350,6 +350,8 @@ public class MainActivity extends Activity {
             addButton(quick,"◉ Logo",v->requestLayerImage(effect));card.addView(quick);
             addButton(card,"♫ Audio → Parameter",v->chooseAudioParameter(effect));
         }
+        addButton(card,"✦ Gerak & Motion Blur",v->editMotion(effect));
+        addButton(card,"◈ Efek berurutan",v->editFilterStack(effect));
         addSlider(card,"Ukuran",reactive.getSize(effect),value->reactive.setSize(effect,value));
         addSlider(card,"Jumlah",reactive.getDensity(effect),value->reactive.setDensity(effect,value));
         addSlider(card,"Reaktivitas",reactive.getStrength(effect),value->reactive.setStrength(effect,value));
@@ -372,7 +374,7 @@ public class MainActivity extends Activity {
             addButton(advanced,"Warna aksen",v->editAccent(effect));
             addSlider(advanced,"Glow",reactive.getVisualizerGlow(effect),value->reactive.setVisualizerGlow(effect,value));
             addSlider(advanced,"Ukuran Logo",reactive.getLogoSize(effect),value->reactive.setLogoSize(effect,value));
-            String[] shapes={"Otomatis","Lingkaran","Sudut bulat","Persegi"};
+            String[] shapes={"Otomatis","Lingkaran","Sudut bulat","Persegi","Segitiga","Hexagon","Diamond","Hati","Bintang"};
             Button shape=addButton(advanced,"Crop Logo: "+shapes[reactive.getLogoShape(effect)],v->{});
             shape.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Crop logo • mengikuti visualizer")
                     .setItems(shapes,(d,index)->{reactive.setLogoShape(effect,index);shape.setText("Crop Logo: "+shapes[index]);}).show());
@@ -461,6 +463,7 @@ public class MainActivity extends Activity {
                     automationLabel.setText(automationSummary(effect));timelineView.refresh();
                 }).show());
         advanced.addView(keyframes);
+        addButton(advanced,"⌁ Kurva Easing / Bezier",v->editCurve(effect));
     }
     private String automationSummary(int effect) {
         int param=selectedKeyframeParam[effect];
@@ -560,10 +563,77 @@ public class MainActivity extends Activity {
         addEffectPanel(effectContainer,id);reorderPanels();timelineView.refresh();chooseVisualizerStyle(id);
     }
     private void chooseVisualizerStyle(int id){
-        new AlertDialog.Builder(this).setTitle("Bentuk visualizer")
-            .setSingleChoiceItems(VisualizerMesh.STYLES,reactive.getVisualizerStyle(id),(d,index)->{
-                reactive.setVisualizerStyle(id,index);refreshLayerEditor();d.dismiss();
-            }).show();
+        ScrollView scroll=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);scroll.addView(list);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("24 visualizer • pilih bentuk").setView(scroll).setNegativeButton("Tutup",null).create();
+        for(int group=0;group<VisualizerMesh.GROUPS.length;group++){
+            list.addView(text(VisualizerMesh.GROUPS[group],14,PURPLE,true));LinearLayout line=null;int n=0;
+            for(int style=0;style<VisualizerMesh.STYLES.length;style++)if(VisualizerMesh.group(style)==group){
+                if(n++%2==0){line=row();list.addView(line);}final int chosen=style;
+                LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setPadding(dp(4),dp(4),dp(4),dp(8));
+                VisualizerGalleryView thumb=new VisualizerGalleryView(this,style);tile.addView(thumb,new LinearLayout.LayoutParams(-1,dp(115)));
+                TextView label=text(VisualizerMesh.STYLES[style]+(style==reactive.getVisualizerStyle(id)?" ✓":""),12,Color.WHITE,true);label.setGravity(Gravity.CENTER);tile.addView(label);
+                tile.setOnClickListener(v->{reactive.setVisualizerStyle(id,chosen);refreshLayerEditor();dialog.dismiss();});line.addView(tile,new LinearLayout.LayoutParams(0,-2,1));
+            }
+        }dialog.show();dialog.getWindow().setLayout(-1,Math.min(dp(600),getResources().getDisplayMetrics().heightPixels-dp(80)));
+    }
+    private android.widget.Spinner choices(LinearLayout panel,String label,String[] options,int selected){
+        panel.addView(text(label,12,PURPLE,true));android.widget.Spinner view=new android.widget.Spinner(this);
+        view.setAdapter(new android.widget.ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,options));view.setSelection(selected);panel.addView(view);return view;
+    }
+    private LinearLayout dialogPanel(){LinearLayout p=new LinearLayout(this);p.setOrientation(LinearLayout.VERTICAL);p.setPadding(dp(16),dp(8),dp(16),dp(8));return p;}
+    private ScrollView scrolling(LinearLayout panel){ScrollView sc=new ScrollView(this);sc.addView(panel);return sc;}
+    private void editMotion(int id){
+        MotionStyle m=reactive.getMotion(id);LinearLayout panel=dialogPanel();
+        android.widget.Spinner style=choices(panel,"Preset gerak otomatis",MotionStyle.NAMES,m.type);
+        android.widget.Spinner source=choices(panel,"Audio untuk Punch / Spring / Bounce / Tilt",ReactiveView.SOURCES,m.source);
+        addSlider(panel,"Intensitas",m.amount,v->m.amount=v);addSlider(panel,"Kecepatan gerak",m.speed,v->m.speed=v);addSlider(panel,"Motion Blur",m.blur,v->m.blur=v);
+        java.util.ArrayList<Integer> parents=new java.util.ArrayList<>();java.util.ArrayList<String> names=new java.util.ArrayList<>();parents.add(-1);names.add("Tanpa induk");int selected=0;
+        for(int p:reactive.getLayerOrder())if(p!=id){parents.add(p);names.add(reactive.getLayerName(p));if(p==reactive.getParent(id))selected=parents.size()-1;}
+        android.widget.Spinner parent=choices(panel,"Ikuti transform layer induk",names.toArray(new String[0]),selected);
+        panel.addView(text("Preset berjalan otomatis pada waktu lagu. Motion blur mengikuti posisi, skala dan rotasi. Nilai lebih tinggi menambah beban render.",12,0xffb5bfd5,false));
+        new AlertDialog.Builder(this).setTitle("Gerak • "+reactive.getLayerName(id)).setView(scrolling(panel)).setPositiveButton("Terapkan",(d,w)->{
+            int p=parents.get(parent.getSelectedItemPosition());if(!reactive.setParent(id,p)){toast("Hubungan induk tidak boleh berputar");return;}
+            m.type=style.getSelectedItemPosition();m.source=source.getSelectedItemPosition();reactive.setMotion(id,m);
+        }).setNegativeButton("Batal",null).show();
+    }
+    private void editCurve(int id){
+        int param=selectedKeyframeParam[id];long time=currentPosition();
+        if(reactive.keyframeCount(id,param)<2){toast("Tambahkan minimal dua keyframe pada parameter ini");return;}
+        LinearLayout panel=dialogPanel();MotionCurve initial=reactive.getCurve(id,param,time);
+        android.widget.Spinner mode=choices(panel,"Jenis kurva",MotionCurve.NAMES,initial.type);CurveEditorView graph=new CurveEditorView(this,initial);panel.addView(graph,new LinearLayout.LayoutParams(-1,dp(220)));
+        mode.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            public void onNothingSelected(android.widget.AdapterView<?> p){}
+            public void onItemSelected(android.widget.AdapterView<?> p,View v,int position,long item){MotionCurve c=graph.getCurve();c.type=position;graph.setCurve(c);}
+        });
+        panel.addView(text("Bezier Custom: geser dua handle. Kurva berlaku dari keyframe sebelum playhead menuju titik berikutnya.",12,0xffb5bfd5,false));
+        new AlertDialog.Builder(this).setTitle("Easing • "+AutomationParameters.NAMES[param]).setView(panel)
+            .setPositiveButton("Segmen ini",(d,w)->{if(!reactive.setCurve(id,param,time,graph.getCurve(),false))toast("Geser playhead di antara dua keyframe");})
+            .setNeutralButton("Semua segmen",(d,w)->reactive.setCurve(id,param,time,graph.getCurve(),true)).setNegativeButton("Batal",null).show();
+    }
+    private void editFilterStack(int id){
+        LayerFilter[] filters=reactive.getFilters(id);String[] labels=new String[filters.length+1];
+        for(int i=0;i<filters.length;i++)labels[i]=(i+1)+". "+LayerFilter.NAMES[filters[i].type]+" • "+filters[i].amount;
+        labels[filters.length]="＋ Tambah efek";
+        new AlertDialog.Builder(this).setTitle("Efek • diproses dari atas ke bawah").setItems(labels,(d,index)->{
+            if(index==filters.length){if(filters.length>=LayerFilter.MAX){toast("Maksimum enam efek per layer");return;}
+                new AlertDialog.Builder(this).setTitle("Pilih efek").setItems(LayerFilter.NAMES,(dd,type)->{LayerFilter[] a=java.util.Arrays.copyOf(filters,filters.length+1);a[filters.length]=new LayerFilter(type);reactive.setFilters(id,a);editFilterStack(id);}).show();
+            }else editFilter(id,index);
+        }).setNegativeButton("Tutup",null).show();
+    }
+    private void editFilter(int id,int index){
+        LayerFilter[] items=reactive.getFilters(id);LayerFilter f=items[index];LinearLayout panel=dialogPanel();
+        addSlider(panel,"Nilai efek",f.amount,v->f.amount=v);
+        String[] sources=new String[ReactiveView.SOURCES.length+1];sources[0]="Manual";System.arraycopy(ReactiveView.SOURCES,0,sources,1,ReactiveView.SOURCES.length);
+        android.widget.Spinner source=choices(panel,"Respons audio efek ini",sources,f.route.source+1);
+        addSlider(panel,"Arah & intensitas audio",(f.route.depth+100)/2,v->f.route.depth=v*2-100);
+        addFrequencySlider(panel,"Min Hz (custom)",f.route.minHz,v->{f.route.minHz=v;f.route.maxHz=Math.max(v,f.route.maxHz);});
+        addFrequencySlider(panel,"Max Hz (custom)",f.route.maxHz,v->{f.route.maxHz=v;f.route.minHz=Math.min(v,f.route.minHz);});
+        addSlider(panel,"Attack ms /10",f.route.attack/10,v->f.route.attack=v*10);addSlider(panel,"Release ms /15",f.route.release/15,v->f.route.release=v*15);
+        String[] order=new String[items.length];for(int i=0;i<order.length;i++)order[i]="Urutan "+(i+1);
+        android.widget.Spinner position=choices(panel,"Urutan efek",order,index);
+        new AlertDialog.Builder(this).setTitle(LayerFilter.NAMES[f.type]).setView(scrolling(panel)).setPositiveButton("Simpan",(d,w)->{
+            f.route.source=source.getSelectedItemPosition()-1;java.util.ArrayList<LayerFilter> list=new java.util.ArrayList<>(java.util.Arrays.asList(items));list.remove(index);list.add(position.getSelectedItemPosition(),f);reactive.setFilters(id,list.toArray(new LayerFilter[0]));editFilterStack(id);
+        }).setNeutralButton("Hapus",(d,w)->{java.util.ArrayList<LayerFilter> list=new java.util.ArrayList<>(java.util.Arrays.asList(items));list.remove(index);reactive.setFilters(id,list.toArray(new LayerFilter[0]));editFilterStack(id);}).setNegativeButton("Batal",null).show();
     }
     private void chooseLogoTarget(){
         java.util.ArrayList<Integer> ids=new java.util.ArrayList<>();java.util.ArrayList<String> names=new java.util.ArrayList<>();

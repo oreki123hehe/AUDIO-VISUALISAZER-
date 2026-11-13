@@ -62,6 +62,13 @@ final class GpuSceneRenderer implements AutoCloseable {
             "if(uLocalShape==1)cover=1.0-smoothstep(.485,.5,length(vUV-vec2(.5)));"+
             "if(uLocalShape==2){vec2 d=max(abs(vUV-vec2(.5))-vec2(.34),vec2(0.0));"+
             "cover=1.0-smoothstep(.15,.16,length(d));}"+
+            "vec2 q=(vUV-vec2(.5))*2.0;"+
+            "if(uLocalShape==4){float edge=max(q.y-.5,max(-1.0-q.y,abs(q.x)-(q.y+1.0)*.57735));cover=1.0-smoothstep(-.025,0.0,edge);}"+
+            "if(uLocalShape==5){float edge=max(abs(q.x)-.866,abs(q.y)+abs(q.x)*.57735-1.0);cover=1.0-smoothstep(-.025,0.0,edge);}"+
+            "if(uLocalShape==6)cover=1.0-smoothstep(.96,1.0,abs(q.x)+abs(q.y));"+
+            "if(uLocalShape==7){q.y=-q.y+.12;float k=q.x*q.x+q.y*q.y-.72;float f=k*k*k-q.x*q.x*q.y*q.y*q.y;cover=1.0-smoothstep(-.02,.02,f);}"+
+            "if(uLocalShape==8){float a=atan(q.y,q.x)+1.5707963;float sector=6.2831853/10.0;float z=mod(a+6.2831853,6.2831853)/sector;float i=floor(z);float r0=mod(i,2.0)<.5?1.0:.48;float r1=mod(i+1.0,2.0)<.5?1.0:.48;"+
+            "float b=fract(z)*sector;float edge=r0*r1*sin(sector)/(r1*sin(sector-b)+r0*sin(b));cover=1.0-smoothstep(edge-.025,edge,length(q));}"+
             "vec4 src=texture2D(uImage,mix(uCrop.xy,uCrop.zw,vUV));"+
             "gl_FragColor=src*(uAlpha*cover);}";
     private static final String LINE_VERTEX="attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}";
@@ -93,7 +100,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "float alpha=uAlpha*(1.0-smoothstep(.65,1.0,abs(vEdge)));"+
             "vec3 c=mix(uColor,uAccent,.5-.5*cos(vGradient*6.2831853));gl_FragColor=vec4(c*alpha,alpha);}";
     private final VisualizerMesh visualizerMesh=new VisualizerMesh();
-    private final FloatBuffer visualizerBuffer=ByteBuffer.allocateDirect(128*18*4*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+    private final FloatBuffer visualizerBuffer=ByteBuffer.allocateDirect(VisualizerMesh.MAX_FLOATS*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
     private int visualizerProgram;
     private final FloatBuffer quad;
     private final FloatBuffer ring;
@@ -108,7 +115,8 @@ final class GpuSceneRenderer implements AutoCloseable {
     private Bitmap loadedBackdrop;
     private int backingWidth,backingHeight,fbo,fboTexture;
     private int frames, backdropUploads;
-    private boolean closed;
+    private boolean closed,isolating;
+    private GpuLayerFilters layerFilters;
     GpuSceneRenderer() {
         quad=floats(new float[]{-1,-1, 1,-1, -1,1, 1,1});
         ring=ByteBuffer.allocateDirect(256*2*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
@@ -135,7 +143,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             throw new IllegalStateException("GPU compositor shader error: "+error);}
         return id;
     }
-    private static int program(String vertex,String fragment){
+    static int program(String vertex,String fragment){
         int v=shader(GLES20.GL_VERTEX_SHADER,vertex),f=shader(GLES20.GL_FRAGMENT_SHADER,fragment);
         int p=GLES20.glCreateProgram();GLES20.glAttachShader(p,v);GLES20.glAttachShader(p,f);
         GLES20.glLinkProgram(p);GLES20.glDeleteShader(v);GLES20.glDeleteShader(f);
@@ -152,7 +160,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
         GLES20.glDisableVertexAttribArray(attr);
     }
-    private static int createTexture(){
+    static int createTexture(){
         int[] ids=new int[1];GLES20.glGenTextures(1,ids,0);
         if(ids[0]==0)throw new IllegalStateException("Cannot allocate GL texture");
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,ids[0]);
@@ -332,23 +340,24 @@ final class GpuSceneRenderer implements AutoCloseable {
     /** Keeps user layer order intact: effect batches are drawn between image/text/video sprites. */
     int composite(GpuSceneFrame scene,GpuParticleRenderer particles,int width,int height,
             boolean export,Runnable refresh){
-        java.util.ArrayList<GpuEffectFrame.Layer> batch=new java.util.ArrayList<>();
         int count=0;
         for(GpuSceneFrame.Item item:scene.drawOrder){
-            if(item.effect!=null){batch.add(item.effect);continue;}
-            if(!batch.isEmpty()){
-                count+=particles.draw(new GpuEffectFrame(scene.effects.timestampMs,
-                        scene.effects.portrait,batch.toArray(new GpuEffectFrame.Layer[0])),width,height);
-                batch.clear();
-            }
-            if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);
-            else sprite(item.sprite,scene,width,height,export,refresh);
+            boolean post=item.filters.length>0||item.motionBlur>0;
+            if(post){if(layerFilters==null)layerFilters=new GpuLayerFilters();layerFilters.start(width,height);}
+            isolating=post;
+            try{
+                if(item.effect!=null){GpuEffectFrame.Layer f=item.effect;
+                    if(post)f=new GpuEffectFrame.Layer(f.id,f.type,0,f.mask,f.particleCount,f.power,f.opacity,f.size,f.speed,f.shiftX,f.shiftY,f.scale,f.rotation,f.direction,f.maskRadius,f.polygon.length==0?null:f.polygon);
+                    count+=particles.draw(new GpuEffectFrame(scene.effects.timestampMs,scene.effects.portrait,new GpuEffectFrame.Layer[]{f}),width,height);
+                }else if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);
+                else sprite(item.sprite,scene,width,height,export,refresh);
+            }finally{isolating=false;}
+            if(post)layerFilters.finish(item,scene);
         }
-        if(!batch.isEmpty())count+=particles.draw(new GpuEffectFrame(scene.effects.timestampMs,
-                scene.effects.portrait,batch.toArray(new GpuEffectFrame.Layer[0])),width,height);
         return count;
     }
-    private static void premultipliedBlend(int mode){
+    private void premultipliedBlend(int mode){
+        if(isolating)mode=0;
         if(mode==1)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE);
         else if(mode==2)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_COLOR);
         else if(mode==3)GLES20.glBlendFunc(GLES20.GL_DST_COLOR,GLES20.GL_ONE_MINUS_SRC_ALPHA);
@@ -473,6 +482,7 @@ final class GpuSceneRenderer implements AutoCloseable {
     @Override public void close(){
         if(closed)return;closed=true;
         releaseFramebuffer();
+        if(layerFilters!=null){layerFilters.close();layerFilters=null;}
         if(backdropTexture!=0)GLES20.glDeleteTextures(1,new int[]{backdropTexture},0);
         if(titleTexture!=0)GLES20.glDeleteTextures(1,new int[]{titleTexture},0);
         for(SpriteTexture sprite:spriteTextures.values())if(sprite.texture!=0)

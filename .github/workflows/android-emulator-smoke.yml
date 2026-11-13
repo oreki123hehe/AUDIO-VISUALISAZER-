@@ -52,9 +52,17 @@ jobs:
             for attempt in $(seq 1 90); do if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
             adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
             grep '^PASS:' smoke-result.txt
+            adb shell am start -W -n com.ranneki.visualizer/.MainActivity
+            adb shell uiautomator dump /sdcard/studio-ui.xml
+            adb pull /sdcard/studio-ui.xml studio-ui.xml
+            adb shell screencap -p /sdcard/studio-editor.png
+            adb pull /sdcard/studio-editor.png studio-editor.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: emulator-pipeline-report
-          path: smoke-result.txt
+          path: |
+            smoke-result.txt
+            studio-ui.xml
+            studio-editor.png
           if-no-files-found: ignore

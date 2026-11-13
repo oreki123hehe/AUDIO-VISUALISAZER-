@@ -4,7 +4,7 @@ import android.graphics.Bitmap;
 
 /** Ready-to-play arrangements. Each layer has its own frequency window and audio connections. */
 final class StudioTemplates {
-    static final String[] NAMES={"Neon Pulse", "Montagem Impact", "Dual Frequency", "Cinematic Orbit", "Clean Bars", "Flow Waves"};
+    static final String[] NAMES={"Neon Pulse", "Montagem Impact", "Dual Frequency", "Cinematic Orbit", "Clean Bars", "Flow Waves", "Heart Bloom", "Star Punch", "Neon Hexagon", "Infinity Drift", "Spiral Orbit", "LED Stage"};
     static void apply(ReactiveView s,int template){
         Bitmap logo=null;String uri="";
         for(int id:s.getLayerOrder())if((s.getLayerType(id)==ReactiveView.VISUALIZER||s.getLayerType(id)==ReactiveView.IMAGE)
@@ -18,7 +18,8 @@ final class StudioTemplates {
         int main=s.addLayer(ReactiveView.VISUALIZER);s.setLayerName(main,NAMES[template]);
         s.setDensity(main,65);s.setSize(main,s.isPortrait()?55:35);s.setOpacity(main,100);s.setStrength(main,70);
         s.setFrequency(main,25,10000);s.setSource(main,1);s.setVisualizerGlow(main,45);
-        connect(s,main,AutomationParameters.SCALE,0,template==1?18:9,25,180);
+        AudioRoute noScale=new AudioRoute();s.setAudioRoute(main,AutomationParameters.SCALE,noScale);
+        MotionStyle motion=new MotionStyle();motion.type=template==1?3:2;motion.amount=template==1?48:28;motion.blur=30;s.setMotion(main,motion);
         if(template==1){s.setLayerColor(main,0xffff537d);s.setAccentColor(main,0xffffc13d);
             int sparks=s.addLayer(ReactiveView.SPARKS);s.setEnabled(sparks,true);s.setOpacity(sparks,55);s.setDensity(sparks,28);s.setSource(sparks,0);
             connect(s,sparks,AutomationParameters.OPACITY,0,55,25,180);s.setOpacity(sparks,15);
@@ -37,6 +38,13 @@ final class StudioTemplates {
             s.setLayerColor(main,0xff83e9e0);s.setAccentColor(main,0xffd5a3ff);
             int lower=s.addLayer(ReactiveView.VISUALIZER);s.setVisualizerStyle(lower,3);s.setLayerY(lower,76);
             s.setSize(lower,38);s.setStrength(lower,35);s.setOpacity(lower,60);s.setSource(lower,3);s.setFrequency(lower,2500,10000);
+        }
+        if(template>=6){
+            int[] styles={16,15,14,17,8,20};s.setVisualizerStyle(main,styles[template-6]);
+            int[] colors={0xffff7daf,0xffffc35a,0xff49e7df,0xff8e9bff,0xffda8aff,0xff5aff94};s.setLayerColor(main,colors[template-6]);
+            motion.type=template==9?9:template==10?6:template==7?3:2;motion.amount=template==10?15:30;s.setMotion(main,motion);
+            if(template==11)s.setLayerY(main,65);
+            LayerFilter bloom=new LayerFilter(1);bloom.amount=8;bloom.route.source=1;bloom.route.depth=18;s.setFilters(main,new LayerFilter[]{bloom});
         }
         if(logo!=null)s.setLayerImage(main,logo,uri);
     }

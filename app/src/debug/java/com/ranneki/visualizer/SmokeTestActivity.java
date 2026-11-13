@@ -172,7 +172,7 @@ public final class SmokeTestActivity extends Activity {
                 if(!layered.exists()||layered.length()<4096)
                     throw new IllegalStateException("GPU media compositor output is empty");
             }finally{layered.delete();scene.closeVideoLayers();}
-            return "H264/AAC + cached GLES compositor + GPU image/text/video layers + portable ZIP: "+
+            return "H264/AAC + 24 visualizers + easing/motion/filters/parenting + logo/stem ZIP + mixed GPU layers: "+
                     mp4.length()+" bytes; "+stats;
         }finally {wav.delete();mp4.delete();}
     }
@@ -198,14 +198,32 @@ public final class SmokeTestActivity extends Activity {
             if(android.graphics.Color.green(corner)>android.graphics.Color.red(corner)+80&&android.graphics.Color.green(corner)>android.graphics.Color.blue(corner)+80)
                 throw new IllegalStateException("Logo center crop failed");
         }finally{output.recycle();}
+        // Exercise transparent layer FBOs and filters with a known colored logo.
+        LayerFilter gray=new LayerFilter(4);gray.amount=0;scene.setFilters(element,new LayerFilter[]{gray});
+        MotionStyle motion=new MotionStyle();motion.blur=60;scene.setMotion(element,motion);
+        output=GpuImageRenderer.render(scene,320,568,350);
+        try{int pixel=output.getPixel(160,264);if(Math.abs(android.graphics.Color.red(pixel)-android.graphics.Color.green(pixel))>3||Math.abs(android.graphics.Color.green(pixel)-android.graphics.Color.blue(pixel))>3)
+            throw new IllegalStateException("Per-layer saturation or transparent composition failed");}finally{output.recycle();}
+        scene.setKeyframe(element,AutomationParameters.X,0,50);scene.setKeyframe(element,AutomationParameters.X,1000,51);
+        float subpixel=scene.poseAt(element,17).x;if(subpixel<=0||subpixel>=1)throw new IllegalStateException("Transform rounded to integer");
+        scene.setCurve(element,AutomationParameters.X,0,new MotionCurve(2),false);
+        motion.type=2;motion.amount=35;scene.setMotion(element,motion);
+        LayerFilter bloom=new LayerFilter(1);bloom.amount=12;bloom.route.source=0;bloom.route.depth=20;
+        scene.setFilters(element,new LayerFilter[]{bloom,gray});
         for(int style=1;style<VisualizerMesh.STYLES.length;style++){
-            int id=scene.addLayer(ReactiveView.VISUALIZER);scene.setVisualizerStyle(id,style);scene.setLayerY(id,15+style*12);scene.setSize(id,18);
+            int id=scene.addLayer(ReactiveView.VISUALIZER);scene.setVisualizerStyle(id,style);scene.setLayerY(id,12+(style%6)*14);scene.setLayerX(id,20+(style/6)*20);scene.setSize(id,12);scene.setVisualizerGlow(id,0);
         }
+        int child=scene.getLayerOrder()[1];if(!scene.setParent(child,element)||scene.setParent(element,child))throw new IllegalStateException("Invalid parent cycle accepted");
         String json=scene.exportProjectJson();ReactiveView restored=new ReactiveView(this);
-        if(!restored.importProjectJson(json)||restored.getLayerCount()!=6)
+        if(!restored.importProjectJson(json)||restored.getLayerCount()!=VisualizerMesh.STYLES.length)
             throw new IllegalStateException("Multiple visualizers not preserved");
         if(restored.getAudioRoute(restored.getLayerOrder()[0],AutomationParameters.SCALE).source!=7)
             throw new IllegalStateException("Independent stem route not preserved");
+        if(restored.getCurve(0,AutomationParameters.X,0).type!=2||restored.getMotion(0).type!=2||restored.getFilters(0).length!=2||restored.getParent(1)!=0)
+            throw new IllegalStateException("Motion, easing, filters or parenting lost in project");
+        org.json.JSONObject malformed=new org.json.JSONObject(json);malformed.getJSONArray("layers").getJSONObject(0).put("parent",0);
+        if(restored.importProjectJson(malformed.toString())||restored.getLayerCount()!=VisualizerMesh.STYLES.length)
+            throw new IllegalStateException("Invalid parent import damaged scene");
         File bundle=new File(getFilesDir(),"studio-test.zip");
         try{
             ProjectBundle.save(this,Uri.fromFile(bundle),json,audio,null);

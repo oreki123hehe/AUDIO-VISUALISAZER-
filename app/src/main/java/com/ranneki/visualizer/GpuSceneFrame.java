@@ -30,6 +30,9 @@ final class GpuSceneFrame {
         this.drawOrder=drawOrder.clone();
     }
     static final class Item {
+        MotionStyle.Pose pose,previousPose;float motionBlur;
+        float[] filters=new float[0];
+        int blend(){return effect!=null?effect.blend:sprite!=null?sprite.blend:visualizer.blend;}
         final GpuEffectFrame.Layer effect;
         final Sprite sprite;
         final VisualizerFrame visualizer;
