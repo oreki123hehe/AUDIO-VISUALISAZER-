@@ -10,12 +10,29 @@ android {
         applicationId 'com.ranneki.visualizer'
         minSdk 26
         targetSdk 34
-        versionCode 9
-        versionName '0.9.0-rc'
+        versionCode 12
+        versionName '0.12.0-studio-beta'
     }
 
+    androidResources { noCompress 'onnx' }
+    defaultConfig { ndk { abiFilters 'arm64-v8a', 'x86_64' } }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.20.0'
+}
+
+tasks.register('verifyOfflineModels') {
+    doLast {
+        ['vocals.onnx', 'drums.onnx', 'bass.onnx', 'other.onnx', 'manifest.json'].each { name ->
+            if (!file("src/main/assets/separation/${name}").isFile()) {
+                throw new GradleException('Run tools/prepare_separation.py before building the offline stem edition')
+            }
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyOfflineModels' }

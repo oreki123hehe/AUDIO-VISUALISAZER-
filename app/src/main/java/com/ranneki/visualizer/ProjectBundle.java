@@ -36,9 +36,16 @@ public final class ProjectBundle {
             try(ZipOutputStream zip=new ZipOutputStream(stream)) {
                 if(music!=null){zipAsset(context,zip,"assets/music.bin",music,total);project.put("bundleAudio","assets/music.bin");}
                 if(background!=null){zipAsset(context,zip,"assets/background.bin",background,total);project.put("bundleBackground","assets/background.bin");}
+                JSONArray clips=project.optJSONArray("audioClips");
+                if(clips!=null){if(clips.length()>AudioMixProject.MAX)throw new IllegalArgumentException("Too many audio clips");for(int i=0;i<clips.length();i++){JSONObject clip=clips.getJSONObject(i);String entry="assets/audio_"+i+".bin";zipAsset(context,zip,entry,Uri.parse(clip.getString("uri")),total);clip.put("uri",entry);}}
+                JSONArray stems=project.optJSONArray("stems");
+                if(stems!=null)for(int i=0;i<Math.min(4,stems.length());i++){
+                    String uri=stems.optString(i,"");
+                    if(!uri.isEmpty()){String entry="assets/stem_"+i+".bin";zipAsset(context,zip,entry,Uri.parse(uri),total);stems.put(i,entry);}
+                }
                 for(int i=0;i<layers.length();i++){
                     JSONObject layer=layers.getJSONObject(i);
-                    if(layer.optInt("type")==ReactiveView.IMAGE){
+                    if(layer.optInt("type")==ReactiveView.IMAGE||layer.optInt("type")==ReactiveView.VISUALIZER){
                         String str=layer.optString("imageUri","");
                         if(!str.isEmpty()){
                             String entry="assets/image_"+i+".bin";
@@ -90,7 +97,7 @@ public final class ProjectBundle {
                     ZipEntry entry;
                     while((entry=zip.getNextEntry())!=null){
                         String name=entry.getName();
-                        if(!name.equals("project.json")&&!name.matches("assets/(music|background|image_[0-9]{1,3}|video_[0-9]{1,3})\\.bin"))
+                        if(!name.equals("project.json")&&!name.matches("assets/(music|background|stem_[0-3]|audio_[0-9]{1,2}|image_[0-9]{1,3}|video_[0-9]{1,3})\\.bin"))
                             throw new IllegalArgumentException("Unknown archive entry");
                         if(media.containsKey(name)||name.equals("project.json")&&jsonBytes!=null)
                             throw new IllegalArgumentException("Duplicate entry");
@@ -131,6 +138,16 @@ public final class ProjectBundle {
                     }
                 }
             }
+            JSONArray stems=project.optJSONArray("stems");
+            if(stems!=null)for(int i=0;i<Math.min(4,stems.length());i++){
+                String asset=stems.optString(i,"");
+                if(!asset.isEmpty()){
+                    if(!asset.matches("assets/stem_[0-3]\\.bin")||!media.containsKey(asset))
+                        throw new IllegalArgumentException("Missing or unbundled stem");
+                    stems.put(i,media.get(asset).toString());
+                }
+            }
+            JSONArray clips=project.optJSONArray("audioClips");if(clips!=null){if(clips.length()>AudioMixProject.MAX)throw new IllegalArgumentException("Too many audio clips");for(int i=0;i<clips.length();i++){JSONObject clip=clips.getJSONObject(i);String asset=clip.getString("uri");if(!asset.matches("assets/audio_[0-9]{1,2}\\.bin")||!media.containsKey(asset))throw new IllegalArgumentException("Missing audio clip");clip.put("uri",media.get(asset).toString());}AudioMixProject.from(clips);}
             Uri music=media.get(project.optString("bundleAudio",""));
             Uri background=media.get(project.optString("bundleBackground",""));
             success=true;

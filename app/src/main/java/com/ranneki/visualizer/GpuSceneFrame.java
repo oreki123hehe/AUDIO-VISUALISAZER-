@@ -13,6 +13,9 @@ final class GpuSceneFrame {
     final float kick, bass, snare,treble,shakeX, shakeY;
     final String fragmentShader;
     final Item[] drawOrder;
+    GpuSceneFrame[] shutter=new GpuSceneFrame[0];
+    float chromatic=.35f,vignette=.22f;
+    CameraRig camera;
     GpuSceneFrame(GpuEffectFrame effects, Bitmap backdrop, float[] spectrum,
             boolean fastPath, boolean spectrumEnabled, int spectrumScale, float kick, float bass,
             float snare,float treble,float shakeX,float shakeY,String fragmentShader,Item[] drawOrder) {
@@ -29,10 +32,16 @@ final class GpuSceneFrame {
         this.drawOrder=drawOrder.clone();
     }
     static final class Item {
+        MotionStyle.Pose pose,previousPose;float motionBlur,feather;
+        float[] filters=new float[0];
+        int id(){return effect!=null?effect.id:sprite!=null?sprite.id:visualizer.id;}
+        int blend(){return effect!=null?effect.blend:sprite!=null?sprite.blend:visualizer.blend;}
         final GpuEffectFrame.Layer effect;
         final Sprite sprite;
-        Item(GpuEffectFrame.Layer layer){effect=layer;sprite=null;}
-        Item(Sprite layer){effect=null;sprite=layer;}
+        final VisualizerFrame visualizer;
+        Item(GpuEffectFrame.Layer layer){effect=layer;sprite=null;visualizer=null;}
+        Item(Sprite layer){effect=null;sprite=layer;visualizer=null;}
+        Item(VisualizerFrame layer){effect=null;sprite=null;visualizer=layer;}
     }
     static final class Sprite {
         final int id,type,blend,mask,color;
@@ -42,6 +51,8 @@ final class GpuSceneFrame {
         final long timestampMs,startMs;
         final float width,height,opacity,shiftX,shiftY,scale,rotation,maskRadius;
         final float[] polygon;
+        float[] crop={0,0,1,1};
+        int localShape=0;float depth;
         Sprite(int id,int type,Bitmap image,VideoFrameLayer video,String text,int color,
                 long timestampMs,long startMs,float width,float height,float opacity,
                 float shiftX,float shiftY,float scale,float rotation,int blend,int mask,

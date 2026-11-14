@@ -1,7 +1,8 @@
 name: Build Android APK
 on:
+  pull_request:
   push:
-    branches: [main, master, release-candidate]
+    branches: [main, master, release-candidate, 'codex/**']
   workflow_dispatch:
 jobs:
   build:
@@ -10,6 +11,22 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore offline source separation models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/separation
+          key: umxhq-onnx-v1-${{ hashFiles('tools/prepare_separation.py') }}
+      - name: Prepare and verify bundled offline models
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv build-model-env
+          build-model-env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          build-model-env/bin/pip install onnx==1.17.0 onnxruntime==1.20.1 numpy
+          build-model-env/bin/python tools/prepare_separation.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,11 +45,16 @@ jobs:
         run: |
           mkdir -p build/pure-tests
           javac -d build/pure-tests \
-            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan,GpuSceneMath}.java \
-            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest,GpuSceneMathTest}.java
-          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest GpuSceneMathTest; do
+            app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,FrameMetrics,ExportProfile,PolygonMask,BeatGrid,ShaderSource,SpectralOnset,ExportBudget,AvSyncWindow,PreviewPacing,TimelineEdit,GpuEffectFrame,PocoBenchmarkPlan,GpuSceneMath,AudioRoute,VisualizerMesh,SceneHistory,MotionCurve,MotionStyle,LayerFilter,DrawnPath,ClipTiming,CameraRig,SongSections}.java \
+            tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,FrameMetricsTest,ExportProfileTest,PolygonMaskTest,BeatGridTest,ShaderSourceTest,SpectralOnsetTest,ExportBudgetTest,AvSyncWindowTest,PreviewPacingTest,TimelineEditTest,GpuEffectFrameTest,PocoBenchmarkPlanTest,GpuSceneMathTest,AudioRouteTest,VisualizerMeshTest,SceneHistoryTest,MotionCurveTest,MotionStyleTest,StudioGeometryTest,ClipTimingTest,SongSectionsTest}.java
+          for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest FrameMetricsTest ExportProfileTest PolygonMaskTest BeatGridTest ShaderSourceTest SpectralOnsetTest ExportBudgetTest AvSyncWindowTest PreviewPacingTest TimelineEditTest GpuEffectFrameTest PocoBenchmarkPlanTest GpuSceneMathTest AudioRouteTest VisualizerMeshTest SceneHistoryTest MotionCurveTest MotionStyleTest StudioGeometryTest ClipTimingTest SongSectionsTest; do
             java -ea -cp build/pure-tests com.ranneki.visualizer.$test
           done
+      - name: Verify GPU pixels and alpha blending
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libgl1-mesa-dri
+          python3 tests/gpu_visual_regression.py
       - name: Assemble debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4

@@ -1,7 +1,8 @@
-name: Android Emulator Offline MP4 Smoke Test
+name: Android Studio Integration Test
 on:
+  pull_request:
   push:
-    branches: [main, release-candidate]
+    branches: [main, release-candidate, 'codex/**']
   workflow_dispatch:
 jobs:
   emulator-pipeline:
@@ -11,6 +12,22 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore offline source separation models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/separation
+          key: umxhq-onnx-v1-${{ hashFiles('tools/prepare_separation.py') }}
+      - name: Prepare and verify bundled offline models
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv build-model-env
+          build-model-env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          build-model-env/bin/pip install onnx==1.17.0 onnxruntime==1.20.1 numpy
+          build-model-env/bin/python tools/prepare_separation.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -35,25 +52,48 @@ jobs:
       - name: Enable hardware virtualization
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
-      - name: Boot emulator and verify H.264/AAC output
+      - name: Assemble before starting emulator
+        run: gradle :app:assembleDebug --stacktrace --no-daemon --max-workers=2
+      - name: Boot emulator and verify studio pipeline
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           target: google_apis
           profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -no-snapshot -memory 2048 -cores 2 -camera-back none -camera-front none
           disable-animations: true
           script: |
-            gradle :app:assembleDebug --stacktrace --no-daemon
+            free -h
+            df -h /
             adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell wm size 540x960
+            adb shell wm density 240
+            adb logcat -c
+            adb logcat -v threadtime > smoke-logcat.txt &
             adb shell am start -n com.ranneki.visualizer/.SmokeTestActivity
-            for attempt in $(seq 1 90); do if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
+            for attempt in $(seq 1 450); do if ! adb get-state >/dev/null 2>&1; then grep -E "RANNEKI_|FATAL|Fatal signal|OutOfMemory" smoke-logcat.txt | tail -80; tail -25 smoke-logcat.txt; exit 1; fi; if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
             adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
+            tail -80 smoke-logcat.txt
             grep '^PASS:' smoke-result.txt
+            adb shell am start -W -n com.ranneki.visualizer/.MainActivity
+            python tools/android_ui_check.py
+      - name: Diagnose runner resources
+        if: failure()
+        run: |
+          free -h
+          df -h /
+          sudo dmesg -T | tail -100
+          cat /sys/fs/cgroup/memory.events 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: emulator-pipeline-report
-          path: smoke-result.txt
+          path: |
+            smoke-result.txt
+            smoke-logcat.txt
+            studio-ui.xml
+            studio-editor.png
+            studio-canvas.png
+            studio-timeline.png
           if-no-files-found: ignore

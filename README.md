@@ -1,141 +1,73 @@
-# Ranneki Visualizer Studio — Integrated Release Candidate
+# Ranneki Reactive Studio
 
-Native Java Android visualizer. Offline rendering and analysis on the device (no server, Termux, internet, or API required at runtime). Target phone Poco F6. This is an **experimental release candidate, not yet field-tested on a Poco F6**.
+Native offline Android music-visual editor, **0.12.0-studio-beta**. Combine up to **48 visual layers**, **29 visualizer styles**, attached cropped logos, audio-driven motion, drawn paths and a perspective camera. This revision expands editing and automatic synchronization; it adds no export features.
 
-## V1.7 foundation
+## Start with automatic synchronization
 
-- Android SAF audio import (MP3/WAV/AAC if Android platform codecs support it), background image import, MediaPlayer playback, offline 32-band FFT analysis, approximated kick/snare/bass/mid/treble, per-layer custom Hz ranges.
-- **Dynamic FX layer editor**: up to 48 independent instances from ten built-in FX types (dust, fire, rain, water ripples, smoke, snow, sparks, lightning, glow, glitch). Add/duplicate/delete, enable, order, and customize each independently. Independent particles/ripple state, beat source, density, size, strength, velocity, direction, alpha, threshold, attack/release, blend/mask, per-property routes, and 16 independent numeric keyframe curves (strength, particle size/count/speed/opacity, x/y, scale, rotation, threshold, attack/release, min/max Hz, mask radius and direction).
-- **Waveform timeline overview**: peak-pooled audio dynamics, scrubbing by touch, highlighted current playhead, a focusable four-lane view of the FX layer time ranges, and visible markers for all parameter keyframes. Timeline can be collapsed to preserve preview height on phones. This is a timeline *overview*, not a full multitrack waveform editing interface; live per-layer volume/track splitting is not implemented.
-- Project JSON serialized into local SharedPreferences as a single preset (including layer order / independent settings). Does not yet include image source assets; import background manually if the app relaunches.
-- **Export MP4 offline with audio** via Android `MediaCodec` H.264 Surface encoder + OpenGL ES texture upload from the deterministic frame-by-frame Canvas renderer, and Android `MediaMuxer` output. AAC inputs are re-muxed if compatible; MP3/WAV/non-AAC are decoded and transcoded to AAC-LC, then muxed. Default 720p30; also 540p30 and experimental 1080p30. Save with Android `ACTION_CREATE_DOCUMENT`, progress and tap-to-cancel. Export may consume significant CPU/GPU, memory, storage, and battery.
-- H.264 encoder export now reports an error if EOS is not returned (instead of treating a timed-out output as a successful file). Audio/video sample-copy checks reject empty tracks. Encoder and muxer finalization has additional guards.
-- Export uses a copied scene state independent of live preview; visuals advance through analysed timestamps in increasing frame order; resulting video timestamp is frame-index-based (30 fps), and audio timestamps are copied or normalized from source. Export expected to support common Android codec implementations, but not verified on a physical Poco F6.
+1. Import **Lagu**, choose one of **12 Templates**, then attach a **Logo**. Switching templates preserves imported artwork and soundtrack; Undo restores the previous arrangement.
+2. Open **Studio+ → Pisahkan audio otomatis + sinkronkan layer**. Four bundled UMX-HQ neural networks estimate vocals, drums, bass and other instruments entirely on the device. Text, images, effects and visualizers receive independent audio routes, and Auto Arrange is enabled.
+3. Use **Bagian lagu & Auto Arrange** to review the estimated intro, verse, build, drop and outro. Labels and boundaries are editable; section changes blend intensity, opacity and scale smoothly.
+4. Use **Audio → Parameter** on any layer to assign different sources to individual properties. The existing frequency/onset controls remain available alongside the four estimated stems.
 
-## Important limitations
+Separation is processing, not live playback. It runs in bounded chunks with cancellation and disk-backed stereo audio. The four bundled models add approximately 93 MB before APK compression; first use also copies the models into app storage. Additional space is needed for four stereo WAV stems. Model estimates can contain leakage and artifacts, and “Instrumen lain” is not a pure melody track. Song-section labels are editable energy/onset estimates, not guaranteed semantic analysis. No server, account, Internet permission or Termux is required.
 
-- **No field test on a real Android phone yet**. CI compile/test success does not guarantee hardware codec and EGL behavior. Need test with AAC, MP3, WAV and various sample rates (including audio silence / skipped PTS).
-- Layer editor supports built-in FX, static image, and text. Full multitrack timeline editing, video clip layers, arbitrary GLSL shaders and freeform masks are not implemented. Current waveform displays a peak-envelope derived from audio analysis; it is not exact sample-level PCM waveform. V1.8 preserves the 16 numeric keyframe curves; discrete choices (blend, mask shape, audio source, enabled state, layer type, text content) are not keyframable.
-- Export supports aspect-ratio presets at 30 FPS and experimental 1080p60 with codec capability detection. It's not a GPU-only pipeline: CPU Canvas draws each frame to Bitmap before uploading to the GPU encoder surface, potentially generating heat. File size and temporary storage usage can be large; 1080p is experimental.
-- Input formats ultimately depend on Android platform codec support. >2-channel non-AAC sources currently not supported; PCM conversions limited to standard PCM16/8/24/32 and float. A failed export may leave an empty SAF document; temporary cache files are cleaned.
-- No audio mastering; AAC transcode uses ~192 kbps. Audio sync and visual orientation require device validation before release.
+## Visualizers and artwork
 
-## Build Android debug APK
+**+ Visualizer** opens a mesh-thumbnail gallery:
 
-Open [GitHub Actions](../../actions), select **Build Android APK**, download `RannekiVisualizerStudio-debug-apk` artifact from a successful run. Uses JDK17, Android SDK35, Gradle8.9 and unit tests for FFT/envelopes/keyframe parameter bounds/PCM audio frame alignment.
+| Family | Styles |
+| --- | --- |
+| Rings and orbits | Ring Spectrum, Ring Wave, Orbit Flower, Dotted Ring, Twin Rings, Spiral, Sunburst, Petal Loop, Arc Spectrum, Radial Ticks |
+| Bars and waves | Spectrum Bars, Mirror Bars, Wave Spectrum, Dot Matrix, LED Columns, Ribbon |
+| Geometry and symbols | Square, Diamond, Triangle, Hexagon, Star, Heart, Infinity, Lissajous |
+| PCM, stereo and custom | PCM Waveform, PCM Stereo, Stereo L/R, Drawn Spectrum, Morph Spectrum |
 
-## Tests
+The first 24 styles use frequency-driven geometry. The two PCM styles preserve signed waveform samples; Stereo L/R uses independently analyzed channels. Draw spectrum shapes A/B in **Kanvas • Path • Pivot • Klip**, then morph manually or with an audio source. Paths are resampled by distance to distribute bars evenly.
 
-```bash
-mkdir -p build/pure-tests
-javac -d build/pure-tests \
-  app/src/main/java/com/ranneki/visualizer/{Fft,BandSpectrum,ReactiveEnvelope,AutomationTrack,AutomationParameters,PcmFrameReader,FrameTimebase,TimelineMath,ExportProfile,FrameMetrics}.java \
-  tests/{SmokeTest,AudioReactiveTest,AutomationTrackTest,AutomationParametersTest,PcmFrameReaderTest,FrameTimebaseTest,TimelineMathTest,ExportProfileTest,FrameMetricsTest}.java
-for test in SmokeTest AudioReactiveTest AutomationTrackTest AutomationParametersTest PcmFrameReaderTest FrameTimebaseTest TimelineMathTest ExportProfileTest FrameMetricsTest; do java -cp build/pure-tests com.ranneki.visualizer.$test; done
+Attached logos stay upright, center-crop to the selected shape, and inherit their visualizer's transform. Circle, rounded square, square, triangle, hexagon, diamond, heart and star crops are available. Newly imported backgrounds are full-canvas image layers with their own motion, effects and audio routes. Older projects retain their original backdrop until a new background is imported.
+
+## Motion and direct editing
+
+- Sixteen parameter tracks with subpixel interpolation; nine timing modes include Spring, Bounce, Overshoot, Hold and editable cubic Bezier curves.
+- Nine automatic motion presets plus Off: Kick Punch, Spring Zoom, Bounce Zoom, Float, Orbit, Spin, Sway, Beat Tilt and Cinematic Drift.
+- Layer parenting and invisible control/null layers. Cycles are rejected; arbitrary pivot points affect rotation and scaling.
+- Finger-drawn motion paths with loop, ping-pong or one-shot playback, easing and optional tangent-following rotation. Splitting a clip preserves its motion phase.
+- Canvas controls pause playback for editing: drag position, use corner/rotation handles, or switch to **PIVOT** to place the anchor. Canvas mode expands the preview and provides an **Editor** return button; opening the timeline replaces the inspector to keep the preview visible on small screens. Position dragging accounts for camera perspective and parent transforms. Existing parameter slider bounds still apply.
+- Camera X/Y/Z, yaw, pitch, roll and focal distance project flat layer planes at independent depths. Orbit, dolly and audio-punch camera motion are available. This is perspective composition of 2D artwork, not a 3D mesh/model editor.
+- Draw closed masks and adjust feathering. Feathering softens the rendered alpha edge, including artwork edges.
+
+## Ordered effects and motion blur
+
+Each layer supports up to **12 ordered filter instances**, chosen from **22 effects**: Blur, Bloom, RGB Split, Wave Warp, Saturation, Exposure, Directional Blur, Zoom Blur, Radial Blur, Twirl, Pixelate, Mirror, Kaleidoscope, Posterize, Invert, Sepia, Contrast, Hue, Sharpen, Scanlines, Lens and Displacement. Each filter can have its own audio source, signed depth, frequency range, attack and release.
+
+Temporal motion blur resamples still artwork, spectrum geometry and particles at the current time and two earlier shutter times. Video retains transform-based blur; it does not decode previous video images for each shutter sample. Blur runs before the ordered effects and final Normal/Add/Screen/Multiply blend. Three reusable transparent GPU framebuffers bound intermediate target count; more effects and blurred layers still increase GPU work.
+
+## Multitrack and projects
+
+**Studio+ → Multitrack audio / suara video** provides up to **16 editable audio clips**. Import audio or a video's audio track, drag placement/trim handles, or set exact in/out points, speed, volume, pan, mute and fade times. Split at the playhead and join compatible adjacent clips. Overlap clips with fades for crossfades. **Terapkan mix** renders a disk-backed stereo mix and analyzes it for preview; edit the retained source clips and apply again to update it. Speed currently changes pitch. Peak attenuation protects the mixed output from clipping.
+
+Visual video/image layers have timeline placement, source in/out, speed, looping and fade transitions. Their split operation preserves media and motion phase; join rejects differing effects/keyframes/settings. Import video audio into the mixer when it should contribute to the soundtrack.
+
+Version 6 JSON preserves advanced layer controls, camera, sections, curves, effects and audio routes, while older projects still load. Session autosave and portable project ZIP also preserve the multitrack audio list; ZIP embeds referenced media and stems. Thirty-state Undo/Redo covers scene/session edits. Revoked file permissions or missing external media may require reimport.
+
+## Build and verification
+
+Use JDK 17, Gradle 8.9 and Android SDK 35 / build-tools 35.0.0. Minimum API 26; APK supports arm64-v8a and x86_64. ONNX Runtime Android is pinned to 1.20.0.
+
+Before building, generate the licensed UMX-HQ assets:
+
+```sh
+python3 -m venv build-model-env
+build-model-env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+build-model-env/bin/pip install onnx==1.17.0 onnxruntime==1.20.1 numpy
+build-model-env/bin/python tools/prepare_separation.py
+gradle :app:assembleDebug
 ```
 
-## Follow-up priorities
+Use Python 3.12 for the pinned conversion environment. Conversion verifies source hashes and checks three sequence lengths against the original PyTorch networks. Only dense MatMul operations are quantized; LSTM weights remain float. CI caches the generated assets, and Android preBuild rejects missing models. See [THIRD_PARTY.md](THIRD_PARTY.md) for model and runtime attribution.
 
-1. Test audio sync, correct video orientation, cancel/error handling and Android hardware encoder availability on Poco F6.
-2. Efficient GPU offscreen compositing to reduce CPU Bitmap/texture upload burden.
-3. Video clip layers, drag-and-drop scene lanes, sample-level waveform rendering, freeform masks, JSON file import/export, 60 FPS and hardware render validation.
+The build runs **28 pure-Java tests** and software-EGL pixel tests covering actual shader orientation, premultiplied blending, logo crops, perspective projection, effects and motion-blur direction. `tests/OfflineStemTest.java` exercises the real Java ONNX engine on a Linux host, checking stereo alignment, exact length and reconstruction across chunk boundaries. The Android integration job additionally exercises actual codecs, four-stem inference, multitrack mix, portable sources, new camera/path state, all effects, visualizer meshes and the existing rendering pipeline; its report and startup screenshot are artifacts of that workflow.
 
-## V1.7 legacy status
+**Studio+ → Uji ketahanan preview 5 menit** measures preview pacing and Android thermal status on the device while looping the current song. GPU timings are CPU submission timings, not GPU kernel execution. No sustained physical Poco F6 result or universal 60 FPS guarantee is claimed. Video currently uses MediaMetadataRetriever/bitmap uploads rather than zero-copy decoding.
 
-- `TimelineView` draws a waveform overview, lane trim blocks and markers for every numeric keyframe; the app avoids heavy timeline redraw when collapsed.
-- `AutomationParametersTest` checks parameter-specific limits, independent curves and serialization; `PcmFrameReaderTest` verifies incomplete input reads cannot drop half a sample frame. Existing FFT, envelope, timebase and timeline tests remain.
-- Build on GitHub Actions validates compilation and pure-Java tests, **not** H.264/AAC runtime operation on the Poco F6.
-- No new install is required until the user chooses to test a release candidate.
-
-## V1.8: GPU post FX, export profiles and real-device performance diagnostics
-
-- Export options: 540p/720p/1080p, 30 fps; experimental 1080p at 60 fps if H.264 codec capabilities allow it.
-- Internal Canvas raster can be 65–100% of target resolution and GPU (GLES 2.0) upscales the final encoded frame; at reduced quality the tradeoff is visible softness.
-- New GPU fragment shader handles audio-reactive RGB channel separation, vignette and a restrained bass/kick pulse on the final image. **The scene and particles remain Canvas-rendered on CPU**: this is not yet a fully GPU-native particle renderer.
-- Export pipeline reports measured CPU render time, EGL GPU upload/swap time, throughput FPS, recent frame-time p95, thermal *severity* (not temperature in Celsius), Java heap usage and final MP4 size.
-- The **Performa**, **Preview 15s**, and **Benchmark MP4 8s** controls collect measurements *on the installed Android phone*. Preview 15s records Canvas `onDraw` CPU timings; it is not a display-vsync FPS counter. MP4 8s tests the complete offline H.264 video + AAC audio mux pipeline, validates the output, records render/encoder wall-clock timings, and deletes its temporary file after reporting. Copy the report from the dialog. The benchmark needs an imported song (8s or longer recommended).
-- Safety improvements: verify output MP4 has video and audio samples, reject unsupported H.264 output profiles before rendering, and delete newly created empty/partial SAF documents on failed copy.
-- Offline CI checks cover `FrameMetrics` and `ExportProfile`. Build success is **not** a Poco F6 performance measurement. CPU/GPU, thermals and FPS on that specific phone must be tested with the installed app.
-
-### Testing matrix for Poco F6 (requires the physical phone)
-
-1. Ensure battery > 40%, disconnect charging, remove battery-saver mode; let device cool to ambient.
-2. Open a consistent 60 s local MP3/WAV and a background image. Keep default effects and compare preview benchmark in ECO 30 FPS vs 60 FPS.
-3. Export 30 s from the same project in 720p/30, 1080p/30 full, 1080p/30 efficient and (if supported) 1080p/60. Note real wall-clock throughput, p95 frame-time, Android thermal severity, output file size, and battery consumption. Export automatically aborts if Android thermal severity reaches SEVERE or worse; stop manual preview if the device becomes uncomfortable, or the device becomes too hot to hold.
-4. Verify MP4 on a separate video player: opening frames, audio onset sync, drop alignment, correct final duration, and no black frames or silent ending.
-5. Copy the **Performa** report so regression between versions is measurable. CI/emulator cannot establish actual Poco F6 temperature or FPS.
-
-### Verification boundary
-
-GitHub Actions can establish that the Android project compiles and the pure Java tests pass. It cannot measure Poco F6 temperature, thermally sustainable FPS, hardware H.264 encoder stability or actual playback sync on that phone. After device testing, use the benchmark report, a saved MP4, and optionally Android Studio/Perfetto traces to diagnose performance. No dedicated cloud server or Termux is needed at runtime.
-
-## Post-V1.8 verified development milestone
-
-- UI now supports exporting/importing `.json` scene presets through Android Storage Access Framework (SAF), with 1 MiB input limit and supported layer type validation. Presets include layer order, numeric automation curves and image URI references, **not media bytes**. Re-import original images/audio when their URI permissions do not transfer.
-- Fixed card reordering to anchor below the Add Layer button rather than a fragile hard-coded layout index; imported presets rebuild their edit cards.
-- Emulator integration no longer depends on AndroidX instrumentation artifacts. The debug-only `SmokeTestActivity` generates synthetic rhythmic WAV, tests FFT analysis, renders 2 seconds of H.264 + AAC offline, verifies both MP4 tracks using `MediaExtractor`, and writes a PASS/FAIL report for CI. Test activity is only packaged in debug variants.
-- **Release blocker:** Device performance, Android hardware codec combinations, audio A/V sync and thermals still require a physical Poco F6 test. CI emulator pass is not a hardware benchmark.
-
-## Release-candidate development batch — video clips, portable archives, and masks
-
-- Added an **offline VIDEO layer** with clip start/end times, opacity, transforms, blending, keyframe automation and polygon masking. Video layers are muted by design: the imported song remains the soundtrack. Preview frame extraction runs asynchronously and may look less smooth on slow sources; export requests exact timestamps through Android MediaMetadataRetriever. High-resolution video decoding is memory-limited by per-frame scaling. The extractor is not a low-latency hardware video timeline decoder and needs Poco F6 validation.
-- Added **custom normalized polygon masks** (3–32 editable points) in addition to circle/top/bottom masks. Polygon shapes are saved in presets and restored in exports. Freehand drawing/antialias feathering is still not implemented.
-- Added **Ranneki project ZIP** export/import (`.rnszip` as an application/zip file), packaging local audio, background artwork, and every image/video layer with project JSON. Imports extract files to app-private storage and remap media URIs without any server. ZIP entries are allowlisted; uncompressed total and per-entry sizes are bounded to avoid untrusted archive expansion. Raw JSON preset export remains available; it does not embed media.
-- Added timeline **zoom 1–16× and left/right window navigation**, preserving existing layer trim/move and keyframe indicators.
-- Android emulator smoke test now exercises video layer rendering plus a project ZIP round-trip, in addition to H.264/AAC export.
-
-### Remaining engineering work
-
-A fully GLES-native GPU particle engine, arbitrary user-written GLSL shaders, sample-accurate stem separation, an unlimited multitrack NLE, low-latency hardware video decoding, and 60 FPS sustained Poco F6 benchmarks remain unfinished. The Android app has not been installed on the physical Poco F6. Successful CI builds or emulator codecs must not be mistaken for real-device thermals, smoothness or final playback quality.
-
-### Beat grid (experimental)
-
-The analyzer estimates an approximate song tempo (70–190 BPM) from detected transients and draws beat-grid markers over the zoomable waveform. This improves timeline navigation but cannot separate musical stems or guarantee BPM for half-time, syncopated, ambient, or heavily distorted music. Effects continue following measured FFT/onset activity; no artificial beat substitutes for the source audio.
-
-### Integrated custom GLSL, stronger onset detection, export storage checks
-
-- The **GPU GLSL Shader** editor accepts a GLES 2.0 fragment shader used by offline MP4 encoding. Built-in Classic, Neon and Monochrome shader templates are included. User GLSL is stored inside project JSON and portable ZIP, and compiler errors appear as export errors. Time and independent kick/bass/snare/treble uniforms drive video effects. GLSL has a 8,000-character limit and GPU-dangerous loops are refused. **The live Canvas preview does not execute custom GLSL**, so review a short MP4 before long export.
-- Audio analysis combines the previous amplitude-rise detector with **per-frequency spectral-flux onset estimates** and refractory gating. This reduces reliance on wide-band volume jumps, but is *not* isolated source separation and cannot guarantee individual instruments in complex mixes.
-- Long exports run a cache free-space preflight using a conservative temporary-file size estimate. This can reject very long high-bitrate exports even if the final MP4 might fit; free storage may still change during export.
-- CI executes extra GLSL input, onset-detector and disk-budget tests. The emulator smoke test compiles the custom Neon fragment shader in the Android GLES environment and encodes an H.264/AAC sample.
-
-**Remaining hard limit:** a fully GPU-native compositor for every masked/blended/keyframed particle and true high-quality drum/vocal stem separation are substantially larger subsystems. Particle layers now use GLES2, with GPU shader post-processing for export. No physical Poco F6 benchmark has been taken.
-
-- Final MP4 validation now scans both video and AAC sample timestamps, detecting gross start/end drift, missing audio, and truncated tracks. This is a technical timestamp check, **not** a replacement for listening to the rendered file on the Poco F6.
-
-- On-device preview reports now include **observed Canvas draw FPS and p95 frame-gap** for actual rendered frames. This is more meaningful than counting Choreographer callbacks, but is not a GPU profiler or measurement from a phone until the app is installed and tested.
-
-- The obsolete AndroidX `androidTest` test source has been retired. The debug-only emulator smoke activity is the maintained end-to-end test and requires no AndroidX/JUnit runtime dependency.
-
-## RC editor update: 48-lane scrolling + keyframe editing
-
-- Timeline now lets users inspect all 48 layer instances by vertically swiping the left lane-name column, or using `↑` / `↓` lane controls. Six lanes fit at once without a huge view.
-- Select a parameter in the layer's **Advanced → Parameter** control, then drag its highlighted keyframe directly on the timeline. The move is atomic: a collision with another point is rejected instead of deleting a neighboring keyframe.
-- `SNAP ON` optionally aligns timeline scrubbing, trim boundaries, moved clip starts and keyframes to *estimated* beat markers when within 140 ms. For exact sample alignment leave snapping off.
-- Layer edits autosave the project JSON once when the gesture finishes, rather than writing persistent preferences every render frame.
-- Fix waveform indexing at the far-right zoom boundary and prevent off-screen keyframes from appearing as fake markers at view edges.
-- Added pure-Java timeline-edit regression tests. **These checks are not physical-device verification.**
-
-## GPU particle renderer (new experimental GLES2 pipeline)
-
-- **All ten built-in FX families** use procedural GLES2 point sprites. The native GLES compositor now also draws the gradient/background artwork, waveform spectrum ring, still-image layers, text layers and silent video layers in their configured stacking order with masks, blend modes, rotation, scaling, position and opacity. The existing Canvas compatibility path is retained if GLSurfaceView is unavailable or camera shake is requested.
-- GPU vertex shader animates particle movement deterministically by audio time; scene exports independent FFT/envelope-mapped strength, density, size, speed, opacity, timeline keyframes, transforms, blend, mask radius, and 3–32 point polygon data. Full codec path composes GPU point sprites over the uploaded CPU base frame.
-- Diagnostics now display real Android GLES vendor/renderer and how many GPU particles were submitted. Displayed average GLES submission time does **not** equal actual shader execution time.
-- Known limitation: particle pass currently composites **after** non-effect layers; mixing foreground images/text between FX layers can change z-order relative to legacy Canvas. This is not yet a GPU-only entire scene compositor, and hardware video decoding still depends on Android.
-- Emulator integration test now exercises all 10 GPU FX families including polygon mask and blend. Successful emulator tests cannot establish thermal performance on physical Poco F6.
-
-### One-tap physical Poco F6 test (available after APK installation)
-
-- Import an original local song >= 8 seconds, allow analysis, and tap **Poco F6 • 3 profil**. The app exports three 8-second workloads to temporary MP4 (720p30 quality, 1080p30 quality, 1080p60 balanced); each requires real Android codec support. Reports include system manufacturer/model, the detected GLES GPU, draw/upload wall clock, video+audio mux throughput, peak Android thermal severity, output size and battery estimate. Temporary files are deleted. A profile that fails is labeled failed, not passed; user can cancel by tapping the status line.
-- Run the separate **Preview 15s** test to measure visible UI frame pacing; the GLES overlay report includes the GPU renderer's identity and submission statistics. For stable measurements disconnect the charger, cool down the phone, and use the same 60s source across versions.
-- **No physical Poco F6 has been connected to this build environment. These are test instruments, not claimed hardware benchmark results.**
-
-## Integrated GLES2 scene compositor — GPU pipeline
-
-- **Main preview + MP4 export share the GPU scene model and user GLSL postprocessing.** The GLES compositor renders all effect, background, still image, text and video layers to a framebuffer. H.264 export postprocesses the GPU framebuffer with the selected GLSL shader and presents it to the codec input `Surface` with timestamps. It no longer uploads one full-resolution CPU Canvas bitmap for each frame on this path.
-- Artwork textures are uploaded **once per GLES context per source bitmap**; text is rasterized to a small alpha texture only when its text/color changes. Video frames are decoded by Android `MediaMetadataRetriever` (CPU/media codec work still applies) and then textured/positioned/masked/blended on GPU; they are **not hardware SurfaceTexture decode-to-GPU zero-copy**. The preview caches decoded frames asynchronously.
-- GLES2 framebuffers retain a separate color texture for the export GLSL postprocess. Texture sizes are checked against `GL_MAX_TEXTURE_SIZE`, and framebuffer completeness is verified. Video, text and image layer ordering, polygon masks, blend modes, transforms and audio-driven opacity are preserved through the GPU compositor.
-- Real device performance cannot be inferred from software-GLES emulator success. Benchmarks must report **GPU-only export frames**, **compatibility frames**, static artwork texture uploads, media texture uploads, actual FPS/frame pacing, thermal severity and hardware codec stability. **No installation on Poco F6 yet.**
-- Camera shake is now applied to the GPU background, effects, sprites and spectrum. CPU Canvas remains the preview fallback if GLES initialization fails; Android video decoding and small text-atlas rasterization still consume some CPU resources. The GPU effect shaders and GLES draw calls require an active EGL context. A successful Android build/emulator test does not prove long sustained performance on Snapdragon 8s Gen 3.
-
-- Preview now runs the same user-specified fragment shader as MP4 export using an offscreen GLES framebuffer; the rendering path is independent of CPU Canvas rasterization. Preview GPU resources are released when detached. The emulator regression checks both the static-artwork GPU path and a mixed image/text/video GPU scene, including MP4 container/audio verification.
+This beta implements specific editing and audio-reactive tools. Complete Avee Player, Alight Motion or CapCut feature parity has not been established. Full quality/performance validation on real songs and physical devices remains necessary; export improvements are outside this revision.

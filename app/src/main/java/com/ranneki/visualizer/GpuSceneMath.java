@@ -13,7 +13,12 @@ public final class GpuSceneMath {
     /** Crop coordinates use top-left pixel origin (as used by Android Bitmap/GLUtils). */
     public static float[] centerCrop(int imageWidth,int imageHeight,boolean portrait){
         if(imageWidth<=0||imageHeight<=0)throw new IllegalArgumentException("Invalid artwork dimensions");
-        float source=(float)imageWidth/imageHeight,target=portrait?9f/16f:16f/9f;
+        return centerCrop(imageWidth,imageHeight,portrait?9f/16f:16f/9f);
+    }
+    public static float[] centerCrop(int imageWidth,int imageHeight,float target){
+        if(imageWidth<=0||imageHeight<=0||!Float.isFinite(target)||target<=0)
+            throw new IllegalArgumentException("Invalid crop dimensions");
+        float source=(float)imageWidth/imageHeight;
         float u0=0,v0=0,u1=1,v1=1;
         if(source>target){float fraction=target/source;u0=(1f-fraction)*.5f;u1=u0+fraction;}
         else{float fraction=source/target;v0=(1f-fraction)*.5f;v1=v0+fraction;}

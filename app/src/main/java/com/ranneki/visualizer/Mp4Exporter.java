@@ -159,7 +159,7 @@ public final class Mp4Exporter {
                 float pulse=Math.min(1f,f.kick*.75f+f.bass*.25f);
                 long submitStart=System.nanoTime();
                 if(gpuOnly)gl.submitGpuScene(gpuScene,FrameTimebase.presentationNs(index,fps),pulse,
-                        profile.chromaticPercent/100f,profile.vignettePercent/100f,ms/1000f,f);
+                        profile.chromaticPercent/100f,profile.vignettePercent/100f,ms/1000f,f,profile.rasterWidth(),profile.rasterHeight());
                 else gl.submit(frame,FrameTimebase.presentationNs(index,fps),pulse,
                         profile.chromaticPercent/100f,profile.vignettePercent/100f,ms/1000f,f,particles);
                 metrics.record(renderTime,System.nanoTime()-submitStart);

@@ -1,0 +1,1 @@
+Bundled UMX-HQ models are generated and verified by tools/prepare_separation.py before an APK is built. The build pipeline caches generated models; no downloads occur on the phone. See THIRD_PARTY.md and the packaged OPEN_UNMIX_LICENSE.txt.

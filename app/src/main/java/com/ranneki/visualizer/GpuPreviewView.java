@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-/** Transparent GLES2 overlay. The CPU View retains images/text/video, while GPU draws all 10 FX. */
+/** GLES preview of the complete scene and its shared postprocessing shader. */
 final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Renderer {
     private final ReactiveView scene;
     private volatile GpuSceneFrame frame;
@@ -80,6 +80,7 @@ final class GpuPreviewView extends GLSurfaceView implements GLSurfaceView.Render
             new Handler(Looper.getMainLooper()).post(()->scene.setGpuPreviewActive(false));
         }
     }
+    void resetMetrics(){frames.set(0);drawNs.set(0);points.set(0);}
     String report(){
         long n=frames.get();
         return "GLES GPU particles: "+(available?"active":"inactive")+" | "+rendererName+

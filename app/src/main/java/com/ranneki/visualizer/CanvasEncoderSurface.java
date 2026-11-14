@@ -115,10 +115,10 @@ final class CanvasEncoderSurface implements AutoCloseable {
     /** Full GPU route: background, cached artwork, reactive particles and spectrum are
      * rasterized into an offscreen GLES framebuffer; no per-frame Android Canvas Bitmap. */
     void submitGpuScene(GpuSceneFrame scene,long ptsNs,float pulse,float chromatic,float vignette,
-            float seconds,AudioAnalyzer.Features audio) {
-        compositor.begin(scene,width,height,true);
-        totalGpuPoints+=compositor.composite(scene,particleGpu,width,height,true,null);
-        compositor.spectrum(scene,width,height);
+            float seconds,AudioAnalyzer.Features audio,int renderWidth,int renderHeight) {
+        compositor.begin(scene,renderWidth,renderHeight,true);
+        totalGpuPoints+=compositor.composite(scene,particleGpu,renderWidth,renderHeight,true,null);
+        compositor.spectrum(scene,renderWidth,renderHeight);
         compositor.end();
         GLES20.glViewport(0,0,width,height);
         GLES20.glDisable(GLES20.GL_BLEND);

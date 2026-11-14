@@ -74,8 +74,8 @@ final class GpuPreviewPostFx implements AutoCloseable {
         GLES20.glUniform1f(snare,frame.snare);
         GLES20.glUniform1f(treble,frame.treble);
         GLES20.glUniform1f(pulse,Math.min(1f,frame.kick*.75f+frame.bass*.25f));
-        GLES20.glUniform1f(chromatic,.35f);
-        GLES20.glUniform1f(vignette,.22f);
+        GLES20.glUniform1f(chromatic,frame.chromatic);
+        GLES20.glUniform1f(vignette,frame.vignette);
         GLES20.glUniform2f(resolution,width,height);
         GLES20.glEnableVertexAttribArray(position);
         GLES20.glEnableVertexAttribArray(texCoord);

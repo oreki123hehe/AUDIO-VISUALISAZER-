@@ -18,6 +18,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         "uniform vec2 uResolution; uniform vec4 uViewRect;\n"+
         "uniform float uDesignH,uTime,uType,uPower,uVelocity,uSize,uPointMax;\n"+
         "uniform vec2 uTranslate,uCosSin; uniform float uScale,uDirection;\n"+
+        "uniform float uCameraEnabled;uniform mat3 uProjection,uProjectionInv;\n"+
         "varying float vSeed; varying float vAlpha;\n"+
         "void main(){\n"+
         " float t=uTime*uVelocity;\n"+
@@ -39,6 +40,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         " vec2 uv=rotated/vec2(400.0,uDesignH)+vec2(.5)+uTranslate;\n"+
         " vec2 screen=uViewRect.xy+uv*uViewRect.zw;\n"+
         " gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);\n"+
+        " float perspective=1.0;if(uCameraEnabled>.5){vec3 projected=uProjection*vec3(rotated+uTranslate*vec2(400.0,uDesignH),1);gl_Position=vec4(projected.xy,0,projected.z);perspective=1.0/max(.05,projected.z); }\n"+
         " float point=3.0+3.0*r;\n"+
         " if(uType<0.5)point=1.4+2.0*r+uPower*8.0;\n"+
         " else if(uType<1.5)point=5.0+9.0*r+uPower*18.0;\n"+
@@ -51,7 +53,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         " else if(uType<8.5)point=12.0+uPower*105.0;\n"+
         " else point=7.0+uPower*36.0;\n"+
         " float px=max(1.0,min(uResolution.x/400.0,uResolution.y/uDesignH));\n"+
-        " gl_PointSize=clamp(point*uSize*uScale*px,1.0,uPointMax);\n"+
+        " gl_PointSize=clamp(point*uSize*uScale*px*perspective,1.0,uPointMax);\n"+
         " vSeed=r; vAlpha=(0.46+0.54*aSeed.z)*(.42+.58*uPower);\n"+
         "}\n";
     private static final String FRAGMENT =
@@ -59,6 +61,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         "uniform vec2 uResolution,uTranslate,uCosSin; uniform vec4 uViewRect;\n"+
         "uniform float uType,uPower,uOpacity,uScale,uDesignH,uMaskRadius;\n"+
         "uniform int uMask,uPolyCount; uniform vec2 uPoly[32];\n"+
+        "uniform float uCameraEnabled;uniform mat3 uProjection,uProjectionInv;\n"+
         "varying float vSeed; varying float vAlpha;\n"+
         "bool insidePoly(vec2 q){\n"+
         " bool inside=false;\n"+
@@ -77,6 +80,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         " vec2 screen=vec2(gl_FragCoord.x/uResolution.x,1.0-gl_FragCoord.y/uResolution.y);\n"+
         " vec2 q=(screen-uViewRect.xy)/uViewRect.zw-vec2(.5)-uTranslate;\n"+
         " vec2 dp=q*vec2(400.0,uDesignH);\n"+
+        " if(uCameraEnabled>.5){vec3 world=uProjectionInv*vec3(screen.x*2.0-1.0,1.0-screen.y*2.0,1);dp=world.xy/world.z-uTranslate*vec2(400.0,uDesignH); }\n"+
         " vec2 inv=vec2(dp.x*uCosSin.x+dp.y*uCosSin.y,-dp.x*uCosSin.y+dp.y*uCosSin.x);\n"+
         " vec2 local=inv/(uScale*vec2(400.0,uDesignH))+vec2(.5);\n"+
         " if(local.x<0.0||local.x>1.0||local.y<0.0||local.y>1.0) discard;\n"+
@@ -98,7 +102,7 @@ final class GpuParticleRenderer implements AutoCloseable {
         " else if(uType<8.5){a=pow(1.0-smoothstep(.0,1.0,d),1.7)*(.22+.55*uPower);c=vec3(.62,.40,1.0);}\n"+
         " else {a=(1.0-step(.18,abs(p.y)))*(.18+.62*uPower);c=vec3(1.0,.22,.83);}\n"+
         " a=clamp(a*vAlpha*uOpacity,0.0,1.0); if(a<.004)discard;\n"+
-        " gl_FragColor=vec4(c,a);\n"+
+        " gl_FragColor=vec4(c*a,a);\n"+
         "}\n";
 
     private final int program,position;
@@ -170,10 +174,10 @@ final class GpuParticleRenderer implements AutoCloseable {
         for(GpuEffectFrame.Layer layer:frame.layers){
             int count=Math.min(MAX_PARTICLES,Math.round(BASE_COUNT[layer.type]*layer.particleCount/512f));
             if(count<=0||layer.opacity<=0)continue;
-            if(layer.blend==1)GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE);
+            if(layer.blend==1)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE);
             else if(layer.blend==2)GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_COLOR);
             else if(layer.blend==3)GLES20.glBlendFunc(GLES20.GL_DST_COLOR,GLES20.GL_ONE_MINUS_SRC_ALPHA);
-            else GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            else GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
             GLES20.glUniform1f(u[4],layer.type);
             GLES20.glUniform1f(u[5],layer.power);
             GLES20.glUniform1f(u[6],layer.speed);
@@ -190,11 +194,12 @@ final class GpuParticleRenderer implements AutoCloseable {
             java.util.Arrays.fill(polyUpload,0f);
             System.arraycopy(layer.polygon,0,polyUpload,0,layer.polygon.length);
             GLES20.glUniform2fv(u[17],32,polyUpload,0);
+            GpuCamera.apply(program,frame.camera,layer.depth,new float[]{left/width,top/height,fittedW/width,fittedH/height},frame.portrait?711:225);
             GLES20.glDrawArrays(GLES20.GL_POINTS,0,count);
             total+=count;
         }
         GLES20.glDisableVertexAttribArray(position);
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA,GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
         GLES20.glDisable(GLES20.GL_BLEND);
         int err=GLES20.glGetError();
         if(err!=GLES20.GL_NO_ERROR)throw new IllegalStateException("GLES particle render error: "+err);

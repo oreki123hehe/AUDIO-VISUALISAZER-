@@ -30,6 +30,7 @@ public final class AudioAnalyzer {
         final long ms;
         final float low, mid, high;
         final float[] bands;
+        float[] left,right; byte[] waveLeft,waveRight;
         Raw(long ms, float low, float mid, float high, float[] bands) {
             this.ms=ms; this.low=low; this.mid=mid; this.high=high;
             this.bands=bands;
@@ -40,14 +41,85 @@ public final class AudioAnalyzer {
         private final Features[] features;
         private final float[][] spectrum;
         private final BeatGrid beatGrid;
+        private float[][] left,right; private byte[][] waveLeft,waveRight;
+        private SongSections sections;
+        public SongSections sections(){return SongSections.decode(sections.encode());}
+        void pcmAt(long ms,boolean rightChannel,float[] out){
+            java.util.Arrays.fill(out,0);if(features.length==0||ms>timestamps[timestamps.length-1]+80)return;
+            int a=before(ms);byte[] wave=(rightChannel?waveRight:waveLeft)[a];
+            for(int i=0;i<out.length;i++){float x=i*(wave.length-1f)/Math.max(1,out.length-1);int j=(int)x,k=Math.min(j+1,wave.length-1);out[i]=(wave[j]+(wave[k]-wave[j])*(x-j))/127f;}
+        }
+        void stereoAt(long ms,boolean rightChannel,float[] out){
+            java.util.Arrays.fill(out,0);if(features.length==0||ms>timestamps[timestamps.length-1]+80)return;
+            int a=before(ms),b=Math.min(a+1,features.length-1);float t=a==b?0:clamp((ms-timestamps[a])/(float)(timestamps[b]-timestamps[a]));float[][] data=rightChannel?right:left;
+            for(int i=0;i<out.length;i++){float x=i*(BandSpectrum.COUNT-1f)/Math.max(1,out.length-1);int j=(int)x,k=Math.min(j+1,BandSpectrum.COUNT-1);out[i]=lerp(lerp(data[a][j],data[a][k],x-j),lerp(data[b][j],data[b][k],x-j),t);}
+        }
+        private final java.util.LinkedHashMap<String,float[]> envelopes=
+                new java.util.LinkedHashMap<String,float[]>(32,.75f,true){
+                    @Override protected boolean removeEldestEntry(java.util.Map.Entry<String,float[]> e){return size()>96;}
+                };
         private Track(long[] timestamps, Features[] features, float[][] spectrum) {
             this.timestamps=timestamps; this.features=features; this.spectrum=spectrum;
             float[] kick=new float[features.length],snare=new float[features.length];
             for(int i=0;i<features.length;i++){kick[i]=features[i].kick;snare[i]=features[i].snare;}
             beatGrid=BeatGrid.detect(timestamps,kick,snare);
+            float[] energy=new float[features.length],bass=new float[features.length];for(int i=0;i<features.length;i++){Features f=features[i];energy[i]=f.bass*.4f+f.mids*.4f+f.highs*.2f;bass[i]=f.bass;}sections=SongSections.detect(timestamps,energy,bass,beatGrid.bpm());
         }
         public int estimatedBpm(){return beatGrid.bpm();}
         public long[] beatPositions(){return beatGrid.positions();}
+        /** Precomputed in audio time. Seeking and 30/60 FPS evaluate the same envelope. */
+        synchronized float envelopeAt(long ms,int source,int minHz,int maxHz,int threshold,int attack,int release){
+            if(features.length==0||ms>timestamps[timestamps.length-1]+80)return 0;
+            String key=source+":"+minHz+":"+maxHz+":"+threshold+":"+attack+":"+release;
+            float[] curve=envelopes.get(key);
+            if(curve==null){
+                curve=new float[features.length];float previous=0;
+                for(int i=0;i<curve.length;i++){
+                    Features f=features[i];float value;
+                    switch(source){
+                        case 0:value=f.kick;break;
+                        case 1:value=f.bass;break;
+                        case 2:value=clamp(f.bass*.58f+f.kick*.88f);break;
+                        case 3:value=f.highs;break;
+                        case 4:value=f.snare;break;
+                        case 5:value=BandSpectrum.range(spectrum[i],minHz,maxHz);break;
+                        case 6:value=f.mids;break;
+                        default:value=Math.max(f.bass,Math.max(f.mids,f.highs));break;
+                    }
+                    float dt=i==0?Math.max(1,timestamps[0]):Math.max(1,timestamps[i]-timestamps[i-1]);
+                    previous=ReactiveEnvelope.step(previous,value,threshold/100f,attack,release,dt);
+                    curve[i]=previous;
+                }
+                envelopes.put(key,curve);
+            }
+            int a=before(ms),b=Math.min(a+1,curve.length-1);
+            float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            return lerp(curve[a],curve[b],t);
+        }
+        synchronized float motionAt(long ms,int source,int mode,int minHz,int maxHz,int speed){
+            if(mode==0)return envelopeAt(ms,source,minHz,maxHz,0,10,130);
+            if(features.length==0||ms>timestamps[timestamps.length-1]+80)return 0;
+            String key="motion:"+source+":"+mode+":"+minHz+":"+maxHz+":"+speed;float[] curve=envelopes.get(key);
+            if(curve==null){
+                envelopeAt(0,source,minHz,maxHz,0,10,130);
+                float[] input=envelopes.get(source+":"+minHz+":"+maxHz+":0:10:130");
+                curve=MotionStyle.spring(input,timestamps,mode==1?.65f:.38f,16+speed*.5f);envelopes.put(key,curve);
+            }
+            int a=before(ms),b=Math.min(a+1,curve.length-1);float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            return lerp(curve[a],curve[b],t);
+        }
+        void spectrumRangeAt(long ms,int minHz,int maxHz,float[] output){
+            if(spectrum.length==0){java.util.Arrays.fill(output,0);return;}
+            int a=before(ms),b=Math.min(a+1,spectrum.length-1);
+            float t=a==b?0:clamp((ms-timestamps[a])/(float)Math.max(1,timestamps[b]-timestamps[a]));
+            float lo=(float)(Math.log(Math.max(25,minHz)/25.0)/Math.log(10000.0/25)*(BandSpectrum.COUNT-1));
+            float hi=(float)(Math.log(Math.max(minHz,maxHz)/25.0)/Math.log(10000.0/25)*(BandSpectrum.COUNT-1));
+            for(int i=0;i<output.length;i++){
+                float index=Math.max(0,Math.min(BandSpectrum.COUNT-1,lo+(hi-lo)*i/Math.max(1f,output.length-1)));
+                int x=(int)index,y=Math.min(x+1,BandSpectrum.COUNT-1);float k=index-x;
+                output[i]=lerp(lerp(spectrum[a][x],spectrum[a][y],k),lerp(spectrum[b][x],spectrum[b][y],k),t);
+            }
+        }
         /** Timeline overview from normalized analysis frames (not decoded PCM).
          * Peak pooling preserves short kick/transient spikes without extra decoding. */
         public float[] waveformPeaks(int columns) {
@@ -219,7 +291,7 @@ public final class AudioAnalyzer {
         }
         data.order(ByteOrder.LITTLE_ENDIAN);
         while(data.remaining()>=bytesPerSample*channels) {
-            float mono=0f;
+            float mono=0f,left=0f,right=0f;
             for(int ch=0;ch<channels;ch++) {
                 float value;
                 switch(encoding) {
@@ -236,14 +308,14 @@ public final class AudioAnalyzer {
                         value=data.getFloat();break;
                     default: value=0f;
                 }
-                mono+=value;
+                if(ch==0)left=value;if(ch==1)right=value;mono+=value;
             }
-            analysis.addSample(mono/channels);
+            analysis.addSample(mono/channels,left,channels==1?left:right);
         }
     }
 
     private static final class StreamAnalysis {
-        final float[] ring=new float[N];
+        final float[] ring=new float[N],ringLeft=new float[N],ringRight=new float[N];
         final float[] re=new float[N];
         final float[] im=new float[N];
         final List<Raw> raw=new ArrayList<>();
@@ -251,9 +323,9 @@ public final class AudioAnalyzer {
         int ringPos=0, sampleRate;
         StreamAnalysis(int sampleRate) { this.sampleRate=sampleRate; }
         void setSampleRate(int sampleRate) { this.sampleRate=sampleRate; }
-        void addSample(float sample) {
+        void addSample(float sample,float left,float right) {
             if (sourceCount++ % DECIMATE != 0) return;
-            ring[ringPos]=sample;
+            ring[ringPos]=sample;ringLeft[ringPos]=left;ringRight[ringPos]=right;
             ringPos=(ringPos+1)%N;
             decimatedCount++;
             if (decimatedCount>=N && (decimatedCount-N)%HOP==0) frame();
@@ -288,7 +360,14 @@ public final class AudioAnalyzer {
             for (int i=0;i<spectrum.length;i++)
                 spectrum[i]=(float)Math.sqrt(bandPower[i]/Math.max(1,bandCount[i]));
             long ms=(long)((decimatedCount-N/2.0)*DECIMATE*1000/sampleRate);
-            raw.add(new Raw(ms,a,b,c,spectrum));
+            Raw f=new Raw(ms,a,b,c,spectrum);f.waveLeft=wave(ringLeft);f.waveRight=wave(ringRight);f.left=channel(ringLeft,effectiveRate);f.right=channel(ringRight,effectiveRate);raw.add(f);
+        }
+        byte[] wave(float[] ring){byte[] out=new byte[128];for(int i=0;i<128;i++)out[i]=(byte)Math.round(Math.max(-1,Math.min(1,ring[(ringPos+i*4+N/2-256)%N]))*127);return out;}
+        float[] channel(float[] ring,float rate){
+            for(int i=0;i<N;i++){re[i]=(float)(ring[(ringPos+i)%N]*(.5-.5*Math.cos(2*Math.PI*i/(N-1))));im[i]=0;}
+            Fft.forward(re,im);float[] out=new float[BandSpectrum.COUNT];int[] count=new int[out.length];
+            for(int k=2;k<N/2;k++){float hz=k*rate/N;if(hz<25||hz>=10000)continue;int i=BandSpectrum.index(hz);out[i]+=re[k]*re[k]+im[k]*im[k];count[i]++;}
+            for(int i=0;i<out.length;i++)out[i]=(float)Math.sqrt(out[i]/Math.max(1,count[i]));return out;
         }
         Track complete() {
             if (raw.isEmpty()) throw new IllegalArgumentException("Audio terlalu singkat atau tidak terbaca.");
@@ -348,7 +427,12 @@ public final class AudioAnalyzer {
                 frames[i]=new Features(cur.bass,cur.mids,cur.highs,
                         Math.max(cur.kick,prev.kick*.72f), Math.max(cur.snare,prev.snare*.65f));
             }
-            return new Track(time,frames,spectrum);
+            Track result=new Track(time,frames,spectrum);result.left=new float[raw.size()][];result.right=new float[raw.size()][];result.waveLeft=new byte[raw.size()][];result.waveRight=new byte[raw.size()][];
+            float peak=0;for(Raw r:raw)for(int k=0;k<BandSpectrum.COUNT;k++)peak=Math.max(peak,Math.max(r.left[k],r.right[k]));
+            peak=Math.max(.00001f,peak);
+            for(int i=0;i<raw.size();i++){Raw r=raw.get(i);result.left[i]=r.left;result.right[i]=r.right;result.waveLeft[i]=r.waveLeft;result.waveRight[i]=r.waveRight;
+                for(int k=0;k<BandSpectrum.COUNT;k++){r.left[k]=clamp(r.left[k]/peak*1.6f);r.right[k]=clamp(r.right[k]/peak*1.6f);}}
+            return result;
         }
         private float percentile(List<Float> values,float p) {
             Collections.sort(values);
