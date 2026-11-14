@@ -17,6 +17,7 @@ final class CameraRig {
     }
     float[] matrix(float depth,float[] rect,float height){float[] origin=homogeneous(0,0,depth,rect,height),right=homogeneous(1,0,depth,rect,height),down=homogeneous(0,1,depth,rect,height);
         return new float[]{right[0]-origin[0],right[1]-origin[1],right[2]-origin[2],down[0]-origin[0],down[1]-origin[1],down[2]-origin[2],origin[0],origin[1],origin[2]};}
+    float[] unproject(float x,float y,float depth,float height){float[] m=inverse(matrix(depth,new float[]{0,0,1,1},height));float a=x/200,b=-y*2/height,w=m[2]*a+m[5]*b+m[8];return new float[]{(m[0]*a+m[3]*b+m[6])/w,(m[1]*a+m[4]*b+m[7])/w};}
     static float[] inverse(float[] m){double a=m[0],b=m[3],c=m[6],d=m[1],e=m[4],f=m[7],g=m[2],h=m[5],i=m[8];double det=a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);if(Math.abs(det)<1e-12)det=det<0?-1e-12:1e-12;
         return new float[]{(float)((e*i-f*h)/det),(float)((f*g-d*i)/det),(float)((d*h-e*g)/det),(float)((c*h-b*i)/det),(float)((a*i-c*g)/det),(float)((b*g-a*h)/det),(float)((b*f-c*e)/det),(float)((c*d-a*f)/det),(float)((a*e-b*d)/det)};}
     MotionStyle.Pose project(MotionStyle.Pose p,float depth){

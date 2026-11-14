@@ -16,12 +16,16 @@ final class StemSeparator {
     static final int FFT=4096,HOP=1024,BINS=2049,CORE=96,CONTEXT=32;
     static File[] separate(Context context,Uri input,File directory,AtomicBoolean cancel,PcmAudio.Progress progress)throws Exception{
         if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Penyimpanan stem tidak tersedia");
-        File decoded=new File(directory,"source.wav");File[] output=new File[4];PcmAudio.Writer[] writers=new PcmAudio.Writer[4];File[] models=new File[4];boolean complete=false;
+        File decoded=new File(directory,"source.wav");
+        try{progress.update(0,"Membaca audio stereo…");PcmAudio.decode(context,input,decoded,cancel);File[] models=new File[4];for(int i=0;i<4;i++){PcmAudio.check(cancel);models[i]=prepareModel(context,NAMES[i]);}return separateDecoded(decoded,models,directory,cancel,progress);}finally{decoded.delete();}
+    }
+    static File[] separateDecoded(File decoded,File[] models,File directory,AtomicBoolean cancel,PcmAudio.Progress progress)throws Exception{
+        if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Penyimpanan stem tidak tersedia");
+        File[] output=new File[4];PcmAudio.Writer[] writers=new PcmAudio.Writer[4];boolean complete=false;
         try{
-            progress.update(0,"Membaca audio stereo…");PcmAudio.decode(context,input,decoded,cancel);
             long required=decoded.length()*4+64L*1024*1024;if(directory.getUsableSpace()<required)throw new IOException("Ruang kosong tidak cukup untuk empat stem");
             OrtEnvironment env=OrtEnvironment.getEnvironment();
-            for(int s=0;s<4;s++){PcmAudio.check(cancel);models[s]=prepareModel(context,NAMES[s]);
+            for(int s=0;s<4;s++){PcmAudio.check(cancel);
                 output[s]=new File(directory,NAMES[s]+".wav");writers[s]=new PcmAudio.Writer(output[s]);}
             float[] window=new float[FFT];for(int i=0;i<FFT;i++)window[i]=(float)(.5-.5*Math.cos(2*Math.PI*i/FFT));
             float[][][] carry=new float[4][2][FFT];float[] weightCarry=new float[FFT];
@@ -58,7 +62,7 @@ final class StemSeparator {
             complete=true;progress.update(100,"Empat stem selesai");return output;
         }finally{
             for(PcmAudio.Writer w:writers)if(w!=null)try{w.close();}catch(Exception ignored){}
-            decoded.delete();if(!complete)for(File f:output)if(f!=null)f.delete();
+            if(!complete)for(File f:output)if(f!=null)f.delete();
         }
     }
     private static long reflect(long i,long n){if(n<=1)return 0;long period=2*n-2;i=((i%period)+period)%period;return i<n?i:period-i;}

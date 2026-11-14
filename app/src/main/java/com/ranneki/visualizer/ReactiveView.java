@@ -112,16 +112,23 @@ public final class ReactiveView extends View {
     }
     public int splitLayer(int id,long ms){
         if(ms<=startTimeMs[id]||ms>=endTimeMs[id])return -1;long end=endTimeMs[id];int next=duplicateLayer(id);if(next<0)return -1;
+        advanced[next].motionOffsetMs=advanced[id].motionOffsetMs+ms-startTimeMs[id];
         advanced[next].clip.offsetMs=advanced[id].clip.offsetMs+(long)((ms-startTimeMs[id])*advanced[id].clip.speed);
         advanced[id].clip.fadeOut=0;advanced[next].clip.fadeIn=0;
         setLayerEnd(id,ms);setLayerStart(next,ms);setLayerEnd(next,end);
         if(videoSources[id]!=null)videoSources[id].setTiming(advanced[id].clip);if(videoSources[next]!=null)videoSources[next].setTiming(advanced[next].clip);projectChanged();return next;
     }
     public boolean joinLayer(int id){int at=layerOrder.indexOf(id);if(at<0||at+1>=layerOrder.size())return false;int next=layerOrder.get(at+1);
-        if(layerType[next]!=layerType[id]||startTimeMs[next]!=endTimeMs[id]||!java.util.Objects.equals(videoUri[next],videoUri[id])||!java.util.Objects.equals(imageUri[next],imageUri[id]))return false;
-        if(Math.abs(advanced[next].clip.speed-advanced[id].clip.speed)>.001||!java.util.Objects.equals(layerText[next],layerText[id]))return false;
-        if(offsetX[next]!=offsetX[id]||offsetY[next]!=offsetY[id]||layerScale[next]!=layerScale[id]||layerRotation[next]!=layerRotation[id]||opacity[next]!=opacity[id]||blend[next]!=blend[id]||mask[next]!=mask[id]||!motion[next].encode().equals(motion[id].encode()))return false;
-        if(advanced[next].clip.inMs!=advanced[id].clip.inMs||advanced[next].clip.outMs!=advanced[id].clip.outMs||advanced[next].clip.loop!=advanced[id].clip.loop)return false;
+        if(startTimeMs[next]!=endTimeMs[id])return false;
+        ClipTiming a=advanced[id].clip,b=advanced[next].clip;
+        long elapsed=endTimeMs[id]-startTimeMs[id];
+        if(a.speed!=b.speed||a.inMs!=b.inMs||a.outMs!=b.outMs||a.loop!=b.loop||a.fadeOut!=0||b.fadeIn!=0)return false;
+        if(Math.abs(b.offsetMs-a.offsetMs-(long)(elapsed*a.speed))>1||advanced[next].motionOffsetMs!=advanced[id].motionOffsetMs+elapsed)return false;
+        try{JSONObject left=layerJson(id),right=layerJson(next);
+            for(JSONObject o:new JSONObject[]{left,right}){o.remove("name");o.remove("startMs");o.remove("endMs");o.getJSONObject("advanced").remove("clip");o.getJSONObject("advanced").remove("motionOffsetMs");}
+            if(!left.toString().equals(right.toString()))return false;
+        }catch(Exception invalid){return false;}
+        for(int child:layerOrder)if(parentLayer[child]==next)parentLayer[child]=id;
         endTimeMs[id]=endTimeMs[next];advanced[id].clip.outMs=advanced[next].clip.outMs;advanced[id].clip.fadeOut=advanced[next].clip.fadeOut;removeLayer(next);if(videoSources[id]!=null)videoSources[id].setTiming(advanced[id].clip);projectChanged();return true;
     }
     @SuppressWarnings("unchecked") private final ArrayList<LayerFilter>[] filters=(ArrayList<LayerFilter>[])new ArrayList<?>[MAX_LAYERS];
@@ -153,6 +160,17 @@ public final class ReactiveView extends View {
     float depthAt(int id){float depth=0;for(int p=id,n=0;p>=0&&n<MAX_LAYERS;p=parentLayer[p],n++)depth+=advanced[p].depth;return depth;}
     private CameraRig cameraAt(long ms){AudioAnalyzer.Track t=signalTrack(camera.source);return camera.at(ms,t==null?0:t.envelopeAt(ms,camera.source>=7?7:camera.source,25,10000,0,20,180));}
     MotionStyle.Pose poseAt(int id,long ms){return cameraAt(ms).project(poseAt(id,ms,0),depthAt(id));}
+    MotionStyle.Pose pivotAt(int id,long ms){MotionStyle.Pose p=worldPoseAt(id,ms);LayerAdvanced a=advanced[id];double r=Math.toRadians(p.rotation);return cameraAt(ms).project(new MotionStyle.Pose(p.x+(float)(a.pivotX*Math.cos(r)-a.pivotY*Math.sin(r))*p.scale,p.y+(float)(a.pivotX*Math.sin(r)+a.pivotY*Math.cos(r))*p.scale,1,0),depthAt(id));}
+    void moveOnCanvas(int id,long ms,float initialX,float initialY,float dx,float dy,int baseX,int baseY){CameraRig c=cameraAt(ms);float h=portrait?711:225;float[] a=c.unproject(initialX,initialY,depthAt(id),h),b=c.unproject(initialX+dx,initialY+dy,depthAt(id),h);float x=b[0]-a[0],y=b[1]-a[1];
+        if(parentLayer[id]>=0){MotionStyle.Pose p=worldPoseAt(parentLayer[id],ms);double r=Math.toRadians(-p.rotation);float xx=(float)(x*Math.cos(r)-y*Math.sin(r))/p.scale;y=(float)(x*Math.sin(r)+y*Math.cos(r))/p.scale;x=xx;}
+        editTransform(id,AutomationParameters.X,baseX+Math.round(x/3.6f),ms);editTransform(id,AutomationParameters.Y,baseY+Math.round(y/h*100),ms);
+    }
+    void pivotOnCanvas(int id,long ms,float x,float y){MotionStyle.Pose world=worldPoseAt(id,ms);float h=portrait?711:225;float[] point=cameraAt(ms).unproject(x,y,depthAt(id),h);double r=Math.toRadians(-world.rotation);float dx=point[0]-world.x,dy=point[1]-world.y;LayerAdvanced a=getAdvanced(id);
+        float ax=Math.max(-200,Math.min(200,(float)(dx*Math.cos(r)-dy*Math.sin(r))/world.scale)),ay=Math.max(-355,Math.min(355,(float)(dx*Math.sin(r)+dy*Math.cos(r))/world.scale));
+        MotionStyle.Pose parent=parentLayer[id]<0?new MotionStyle.Pose(0,0,1,0):worldPoseAt(parentLayer[id],ms);r=Math.toRadians(world.rotation-parent.rotation);float scale=world.scale/parent.scale,dax=ax-a.pivotX,day=ay-a.pivotY;
+        float compensateX=(float)(dax*Math.cos(r)-day*Math.sin(r))*scale-dax,compensateY=(float)(dax*Math.sin(r)+day*Math.cos(r))*scale-day;
+        a.pivotX=ax;a.pivotY=ay;setAdvanced(id,a);editTransform(id,AutomationParameters.X,keyframeValueAt(id,AutomationParameters.X,ms)+Math.round(compensateX/3.6f),ms);editTransform(id,AutomationParameters.Y,keyframeValueAt(id,AutomationParameters.Y,ms)+Math.round(compensateY/h*100),ms);
+    }
     private MotionStyle.Pose worldPoseAt(int id,long ms){return poseAt(id,ms,0);}
     private MotionStyle.Pose poseAt(int id,long ms,int depth){
         MotionStyle.Pose[] cached=poseCache.get(ms);if(cached==null){cached=new MotionStyle.Pose[MAX_LAYERS];poseCache.put(ms,cached);}
@@ -161,10 +179,10 @@ public final class ReactiveView extends View {
         MotionStyle.Pose p=new MotionStyle.Pose((valueAt(id,AutomationParameters.X,ms)-50)*3.6f,
             (valueAt(id,AutomationParameters.Y,ms)-50)*(portrait?711f:225f)/100f,
             .25f+valueAt(id,AutomationParameters.SCALE,ms)*.015f,(valueAt(id,AutomationParameters.ROTATION,ms)-50)*3.6f);
-        p=m.apply(p,ms-startTimeMs[id],signal);
+        p=m.apply(p,ms-startTimeMs[id]+advanced[id].motionOffsetMs,signal);
         LayerAdvanced a=advanced[id];
-        if(a.motionPath!=null){float f=Math.max(0,ms-startTimeMs[id])%(long)a.pathDuration/(float)a.pathDuration;float[] point=a.motionPath.at(f),origin=a.motionPath.at(0);
-            p=new MotionStyle.Pose(p.x+(point[0]-origin[0])*180,p.y+(point[1]-origin[1])*(portrait?320:100),p.scale,p.rotation+(a.followPath?a.motionPath.tangent(f):0));}
+        if(a.motionPath!=null){float progress=Math.max(0,ms-startTimeMs[id]+a.motionOffsetMs)/(float)a.pathDuration;boolean reverse=a.pathMode==1&&((int)progress%2==1);float f=a.pathMode==2?Math.min(1,progress):progress%1;if(reverse)f=1-f;f=a.pathCurve.map(f);float[] point=a.motionPath.at(f),origin=a.motionPath.at(0);
+            p=new MotionStyle.Pose(p.x+(point[0]-origin[0])*180,p.y+(point[1]-origin[1])*(portrait?320:100),p.scale,p.rotation+(a.followPath?a.motionPath.tangent(f)+(reverse?180:0):0));}
         if(a.autoArrange)p=new MotionStyle.Pose(p.x,p.y,p.scale*(.9f+.1f*sections.intensity(ms)),p.rotation);
         p=CameraRig.pivot(p,a.pivotX,a.pivotY);
         cached[id]=parentLayer[id]>=0&&depth<MAX_LAYERS?poseAt(parentLayer[id],ms,depth+1).child(p):p;return cached[id];
@@ -740,6 +758,12 @@ public final class ReactiveView extends View {
             root.put("cameraShake",cameraShake);root.put("shaderSource",shaderSource);
             JSONArray layers=new JSONArray();
             for(int id:layerOrder) {
+                layers.put(layerJson(id));
+            }
+            root.put("layers",layers);return root.toString();
+        }catch(Exception e){throw new IllegalStateException("Preset JSON gagal",e);}
+    }
+    private JSONObject layerJson(int id)throws Exception {
                 JSONObject o=new JSONObject();o.put("type",layerType[id]);o.put("enabled",enabled[id]);
                 o.put("name",layerName[id]);o.put("text",layerText[id]);
                 o.put("visualizerStyle",visualizerStyle[id]);o.put("accentColor",accentColor[id]);
@@ -764,10 +788,7 @@ public final class ReactiveView extends View {
                 o.put("automation",automation[id][AutomationParameters.STRENGTH].encode());
                 JSONArray curves=new JSONArray();
                 for(AutomationTrack curve:automation[id])curves.put(curve.encode());
-                o.put("keyframes",curves);layers.put(o);
-            }
-            root.put("layers",layers);return root.toString();
-        }catch(Exception e){throw new IllegalStateException("Preset JSON gagal",e);}
+                o.put("keyframes",curves);return o;
     }
     public boolean importProjectJson(String json) {
         if(json==null||json.isEmpty())return false;

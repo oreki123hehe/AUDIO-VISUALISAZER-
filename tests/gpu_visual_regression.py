@@ -119,6 +119,28 @@ for shape in [1,2,4,5,6,7,8]:
     int_uni('uLocalShape',shape);clear_color(0,0,0,0);clear(0x4000);draw(5,0,4)
     assert pixel(32,32)[0]>200, ('Missing logo center',shape)
     assert pixel(2,2)[3]<20, ('Uncropped logo corner',shape)
+# Exercise non-affine perspective on the actual sprite vertex shader, including texture UVs.
+import math
+ca,sa=math.cos(math.radians(30)),math.sin(math.radians(30))
+cb,sb=math.cos(math.radians(15)),math.sin(math.radians(15))
+depth,focal,height=120,600,225
+matrix=[ca/200,2*sb*sa/height,cb*sa/focal,0,-2*cb/height,sb/focal,
+        -sa*depth/200,2*sb*ca*depth/height,1+cb*ca*depth/focal]
+int_uni('uLocalShape',0);uni('uCameraEnabled',1)
+glfn('glUniformMatrix3fv',None,I,I,U,C.POINTER(F))(location(p,b'uProjection'),1,0,(F*9)(*matrix))
+tex([255,0,0,255]*8+[0,0,255,255]*8)
+clear_color(0,0,0,0);clear(0x4000);draw(5,0,4)
+def project_pixel(x,y):
+    w=matrix[2]*x+matrix[5]*y+matrix[8]
+    return int(((matrix[0]*x+matrix[3]*y+matrix[6])/w+1)*32),int(((matrix[1]*x+matrix[4]*y+matrix[7])/w+1)*32)
+for xx,yy in [(-90,-65),(120,-60),(-70,60),(100,65)]:
+    actual=pixel(*project_pixel(xx,yy))
+    assert actual[0 if yy<0 else 2]>200, ('Perspective texture orientation',xx,yy,actual)
+for xx,yy in [(240,50),(30,170)]:
+    actual=pixel(*project_pixel(xx,yy))
+    assert actual[3]==0, ('Perspective boundary mismatch',xx,yy,actual)
+uni('uCameraEnabled',0)
+print('PASS: perspective projection, depth-dependent clip w, cropped bounds and upright texture')
 # Execute the actual ordered-filter / motion-blur shader.
 source=(Path(__file__).resolve().parents[1]/'app/src/main/java/com/ranneki/visualizer/GpuLayerFilters.java').read_text()
 v=shader(0x8B31,java_string('VERTEX'));f=shader(0x8B30,java_string('FRAGMENT'))

@@ -1,4 +1,4 @@
-name: Android Emulator Offline MP4 Smoke Test
+name: Android Studio Integration Test
 on:
   pull_request:
   push:
@@ -54,7 +54,7 @@ jobs:
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - name: Assemble before starting emulator
         run: gradle :app:assembleDebug --stacktrace --no-daemon --max-workers=2
-      - name: Boot emulator and verify H.264/AAC output
+      - name: Boot emulator and verify studio pipeline
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -64,6 +64,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -memory 2048 -cores 2 -camera-back none -camera-front none
           disable-animations: true
           script: |
+            free -h
+            df -h /
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell wm size 540x960
             adb shell wm density 240
@@ -79,6 +81,13 @@ jobs:
             adb pull /sdcard/studio-ui.xml studio-ui.xml
             adb shell screencap -p /sdcard/studio-editor.png
             adb pull /sdcard/studio-editor.png studio-editor.png
+      - name: Diagnose runner resources
+        if: failure()
+        run: |
+          free -h
+          df -h /
+          sudo dmesg -T | tail -100
+          cat /sys/fs/cgroup/memory.events 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
