@@ -9,8 +9,16 @@ def adb(*args):
 
 
 def snapshot():
-    adb("shell", "uiautomator", "dump", "/sdcard/studio-check.xml")
-    return ET.fromstring(adb("exec-out", "cat", "/sdcard/studio-check.xml"))
+    for _ in range(3):
+        adb("shell", "uiautomator", "dump", "/sdcard/studio-check.xml")
+        tree = ET.fromstring(adb("exec-out", "cat", "/sdcard/studio-check.xml"))
+        # The emulator's launcher can ANR during software GPU tests. Dismiss only
+        # that observed external-app dialog; an app-under-test ANR must still fail.
+        if any(n.get("text") == "Pixel Launcher isn't responding" for n in tree.iter("node")):
+            tap(named(tree, "Close app"))
+            continue
+        return tree
+    raise AssertionError("Emulator launcher repeatedly blocked the editor")
 
 
 def named(tree, label):
@@ -30,7 +38,11 @@ def capture(name):
         out.write(adb("exec-out", "screencap", "-p"))
 
 
-tap(named(snapshot(), "✦ Studio+"))
+tree = snapshot()
+with open("studio-ui.xml", "wb") as out:
+    out.write(ET.tostring(tree))
+capture("studio-editor.png")
+tap(named(tree, "✦ Studio+"))
 tap(named(snapshot(), "Edit layer di kanvas"))
 tree = snapshot()
 named(tree, "Pilih layer untuk digeser")

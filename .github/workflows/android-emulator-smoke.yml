@@ -77,10 +77,6 @@ jobs:
             tail -80 smoke-logcat.txt
             grep '^PASS:' smoke-result.txt
             adb shell am start -W -n com.ranneki.visualizer/.MainActivity
-            adb shell uiautomator dump /sdcard/studio-ui.xml
-            adb pull /sdcard/studio-ui.xml studio-ui.xml
-            adb shell screencap -p /sdcard/studio-editor.png
-            adb pull /sdcard/studio-editor.png studio-editor.png
             python tools/android_ui_check.py
       - name: Diagnose runner resources
         if: failure()
