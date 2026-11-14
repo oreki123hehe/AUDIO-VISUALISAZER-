@@ -35,7 +35,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "gl_FragColor=vec4(mix(tex.rgb,vec3(.0235,.043,.125),.47),tex.a*.86);}";
     private static final String SPRITE_VERTEX="precision mediump float;attribute vec2 aCorner;"+
             "uniform vec4 uSceneRect;uniform vec2 uSize,uShift,uRot,uCamera;"+
-            "uniform float uScale,uDesignH;varying vec2 vUV,vDesign;"+
+            "uniform float uScale,uDesignH,uCameraEnabled;uniform mat3 uProjection;varying vec2 vUV,vDesign;"+
             "void main(){vec2 center=vec2(200.0,uDesignH*0.5);"+
             "vec2 untransformed=center+aCorner*uSize;"+
             "vDesign=untransformed/vec2(400.0,uDesignH);vUV=aCorner+vec2(.5);"+
@@ -43,7 +43,7 @@ final class GpuSceneRenderer implements AutoCloseable {
             "vec2 rotated=vec2(p.x*uRot.x-p.y*uRot.y,p.x*uRot.y+p.y*uRot.x);"+
             "vec2 coord=center+rotated+uShift+uCamera;"+
             "vec2 screen=uSceneRect.xy+coord/vec2(400.0,uDesignH)*uSceneRect.zw;"+
-            "gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);}";
+            "gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0.0,1.0);if(uCameraEnabled>.5){vec3 projected=uProjection*vec3(coord-center,1);gl_Position=vec4(projected.xy,0,projected.z);}}";
     private static final String SPRITE_FRAGMENT="precision mediump float;"+
             "varying vec2 vUV,vDesign;uniform sampler2D uImage;"+
             "uniform float uAlpha,uMaskRadius,uDesignH;uniform vec4 uCrop;uniform int uLocalShape;"+
@@ -82,11 +82,12 @@ final class GpuSceneRenderer implements AutoCloseable {
     private static final String VISUALIZER_VERTEX="precision mediump float;attribute vec4 aPoint;"+
             "uniform vec4 uRect;uniform vec2 uShift,uRot;uniform float uScale,uDesignH;"+
             "varying vec2 vDesign;varying float vGradient,vEdge;"+
+            "uniform float uCameraEnabled;uniform mat3 uProjection;"+
             "void main(){vGradient=aPoint.z;vEdge=aPoint.w;"+
             "vDesign=(aPoint.xy+vec2(200.0,uDesignH*.5))/vec2(400.0,uDesignH);"+
             "vec2 p=aPoint.xy*uScale;vec2 r=vec2(p.x*uRot.x-p.y*uRot.y,p.x*uRot.y+p.y*uRot.x);"+
             "vec2 xy=(r+vec2(200.0,uDesignH*.5)+uShift)/vec2(400.0,uDesignH);"+
-            "vec2 screen=uRect.xy+xy*uRect.zw;gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0,1);}";
+            "vec2 screen=uRect.xy+xy*uRect.zw;gl_Position=vec4(screen.x*2.0-1.0,1.0-screen.y*2.0,0,1);if(uCameraEnabled>.5){vec3 projected=uProjection*vec3(r+uShift,1);gl_Position=vec4(projected.xy,0,projected.z);}}";
     private static final String VISUALIZER_FRAGMENT="precision mediump float;"+
             "varying vec2 vDesign;varying float vGradient,vEdge;uniform vec3 uColor,uAccent;"+
             "uniform float uAlpha,uMaskRadius,uDesignH;uniform int uMask,uPolyCount;uniform vec2 uPoly[32];"+
@@ -305,6 +306,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         GLES20.glEnable(GLES20.GL_BLEND);
         premultipliedBlend(item.blend);
         GLES20.glUseProgram(spriteProgram);
+        GpuCamera.apply(spriteProgram,scene.camera,item.depth,rect,h);
         GLES20.glUniform4f(GLES20.glGetUniformLocation(spriteProgram,"uSceneRect"),
                 rect[0],rect[1],rect[2],rect[3]);
         GLES20.glUniform2f(GLES20.glGetUniformLocation(spriteProgram,"uSize"),item.width,item.height);
@@ -362,7 +364,7 @@ final class GpuSceneRenderer implements AutoCloseable {
     }
     private int drawItem(GpuSceneFrame.Item item,GpuSceneFrame scene,GpuParticleRenderer particles,int width,int height,boolean export,Runnable refresh,boolean isolated){
         if(item.effect!=null){GpuEffectFrame.Layer f=item.effect;if(isolated)f=new GpuEffectFrame.Layer(f.id,f.type,0,f.mask,f.particleCount,f.power,f.opacity,f.size,f.speed,f.shiftX,f.shiftY,f.scale,f.rotation,f.direction,f.maskRadius,f.polygon.length==0?null:f.polygon);
-            return particles.draw(new GpuEffectFrame(scene.effects.timestampMs,scene.effects.portrait,new GpuEffectFrame.Layer[]{f}),width,height);}
+            f.depth=item.effect.depth;GpuEffectFrame effects=new GpuEffectFrame(scene.effects.timestampMs,scene.effects.portrait,new GpuEffectFrame.Layer[]{f});effects.camera=scene.camera;return particles.draw(effects,width,height);}
         if(item.visualizer!=null)visualizer(item.visualizer,scene,width,height,export,refresh);else sprite(item.sprite,scene,width,height,export,refresh);return 0;
     }
     private void premultipliedBlend(int mode){
@@ -378,6 +380,7 @@ final class GpuSceneRenderer implements AutoCloseable {
         GLES20.glUseProgram(visualizerProgram);
         float[] rect=fittedRect(scene.effects.portrait,width,height);float h=scene.effects.portrait?711:225;
         int p=visualizerProgram;
+        GpuCamera.apply(p,scene.camera,frame.depth,rect,h);
         GLES20.glUniform4f(GLES20.glGetUniformLocation(p,"uRect"),rect[0],rect[1],rect[2],rect[3]);
         GLES20.glUniform2f(GLES20.glGetUniformLocation(p,"uShift"),frame.x,frame.y);
         double angle=Math.toRadians(frame.rotation);

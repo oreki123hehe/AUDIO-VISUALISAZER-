@@ -150,7 +150,10 @@ public final class ReactiveView extends View {
     private final java.util.LinkedHashMap<Long,MotionStyle.Pose[]> poseCache=new java.util.LinkedHashMap<Long,MotionStyle.Pose[]>(4,.75f,true){
         protected boolean removeEldestEntry(java.util.Map.Entry<Long,MotionStyle.Pose[]> entry){return size()>2;}
     };
-    MotionStyle.Pose poseAt(int id,long ms){float depth=0;for(int p=id,n=0;p>=0&&n<MAX_LAYERS;p=parentLayer[p],n++)depth+=advanced[p].depth;return camera.project(poseAt(id,ms,0),depth);}
+    float depthAt(int id){float depth=0;for(int p=id,n=0;p>=0&&n<MAX_LAYERS;p=parentLayer[p],n++)depth+=advanced[p].depth;return depth;}
+    private CameraRig cameraAt(long ms){AudioAnalyzer.Track t=signalTrack(camera.source);return camera.at(ms,t==null?0:t.envelopeAt(ms,camera.source>=7?7:camera.source,25,10000,0,20,180));}
+    MotionStyle.Pose poseAt(int id,long ms){return cameraAt(ms).project(poseAt(id,ms,0),depthAt(id));}
+    private MotionStyle.Pose worldPoseAt(int id,long ms){return poseAt(id,ms,0);}
     private MotionStyle.Pose poseAt(int id,long ms,int depth){
         MotionStyle.Pose[] cached=poseCache.get(ms);if(cached==null){cached=new MotionStyle.Pose[MAX_LAYERS];poseCache.put(ms,cached);}
         if(cached[id]!=null)return cached[id];
@@ -234,7 +237,7 @@ public final class ReactiveView extends View {
                 }
             }
             int count=Math.round(512f*amount(id));
-            MotionStyle.Pose pose=poseAt(id,framePositionMs);
+            MotionStyle.Pose pose=worldPoseAt(id,framePositionMs);
             int dir=animated(id,AutomationParameters.DIRECTION);
             batches.add(new GpuEffectFrame.Layer(id,type,blend[id],mask[id],count,
                     intensity(id),opacity(id),volume(id),speed(id),
@@ -242,6 +245,7 @@ public final class ReactiveView extends View {
                     pose.scale,pose.rotation,
                     dir==0?-1f:(dir-1)/99f,
                     smooth(id,AutomationParameters.MASK_RADIUS)/100f,polygon));
+            batches.get(batches.size()-1).depth=depthAt(id);
         }
         return new GpuEffectFrame(Math.max(0L,framePositionMs),portrait,
                 batches.toArray(new GpuEffectFrame.Layer[0]));
@@ -292,12 +296,13 @@ public final class ReactiveView extends View {
                 PolygonMask p=polygons[id];poly=new float[p.count()*2];
                 for(int j=0;j<p.count();j++){poly[2*j]=p.x(j);poly[2*j+1]=p.y(j);}
             }
-            MotionStyle.Pose pose=poseAt(id,framePositionMs);
+            MotionStyle.Pose pose=worldPoseAt(id,framePositionMs);
             GpuSceneFrame.Sprite sprite=new GpuSceneFrame.Sprite(
                     id,type,bitmap,video,text,textColor[id],framePositionMs,startTimeMs[id],
                     contentWidth,contentHeight,opacity(id),
                     pose.x,pose.y,pose.scale,pose.rotation,
                     blend[id],mask[id],smooth(id,AutomationParameters.MASK_RADIUS)/100f,poly);
+            sprite.depth=depthAt(id);
             if(type==IMAGE&&advanced[id].fillCanvas)sprite.crop=GpuSceneMath.centerCrop(bitmap.getWidth(),bitmap.getHeight(),400f/h);
             if(type==VIDEO)sprite.crop=GpuSceneMath.centerCrop(video.width(),video.height(),400f/h);
             drawOrder.add(decorate(new GpuSceneFrame.Item(sprite),id));
@@ -306,7 +311,7 @@ public final class ReactiveView extends View {
                 false,spectrumScale,live.kick,live.bass,live.snare,live.highs,
                 cameraShakeX(),cameraShakeY(),shaderSource,
                 drawOrder.toArray(new GpuSceneFrame.Item[0]));
-        scene.chromatic=chromatic/100f;scene.vignette=vignette/100f;return scene;
+        scene.camera=cameraAt(framePositionMs);scene.chromatic=chromatic/100f;scene.vignette=vignette/100f;return scene;
     }
     /** Advances audio/automation without allocating a full-screen CPU canvas. */
     public GpuSceneFrame renderGpuOnlyExportFrame(long positionMs) {
@@ -1065,7 +1070,7 @@ public final class ReactiveView extends View {
         float height=(8+smooth(id,AutomationParameters.STRENGTH)*.65f)*(.35f+envelope[id]*.65f);
         float[] bands=new float[64];AudioAnalyzer.Track data=signalTrack(source[id]);
         if(data!=null)data.spectrumRangeAt(framePositionMs,animated(id,AutomationParameters.MIN_HZ),animated(id,AutomationParameters.MAX_HZ),bands);
-        MotionStyle.Pose pose=poseAt(id,framePositionMs);
+        MotionStyle.Pose pose=worldPoseAt(id,framePositionMs);
         float x=pose.x+cameraShakeX(),y=pose.y+cameraShakeY(),scale=pose.scale,rotation=pose.rotation;
         float[] poly=new float[0];
         if(mask[id]==4&&polygons[id]!=null){PolygonMask pm=polygons[id];poly=new float[pm.count()*2];
@@ -1081,12 +1086,12 @@ public final class ReactiveView extends View {
             logo=new GpuSceneFrame.Sprite(id,IMAGE,image,null,null,Color.WHITE,framePositionMs,0,
                     diameter,diameter,opacity(id),logoX,logoY,scale,rotation,blend[id],mask[id],smooth(id,AutomationParameters.MASK_RADIUS)/100f,poly);
             logo.crop=GpuSceneMath.centerCrop(image.getWidth(),image.getHeight(),1f);
-            logo.localShape=logoShape[id]==0?VisualizerMesh.logoShape(visualizerStyle[id]):logoShape[id];
+            logo.depth=depthAt(id);logo.localShape=logoShape[id]==0?VisualizerMesh.logoShape(visualizerStyle[id]):logoShape[id];
         }
         VisualizerFrame frame=new VisualizerFrame(id,visualizerStyle[id],16+animated(id,AutomationParameters.DENSITY)*112/100,
                 textColor[id],accentColor[id],blend[id],mask[id],radius,height,1+smooth(id,AutomationParameters.VELOCITY)*.045f,
                 visualizerGlow[id]/100f,opacity(id),x,y,scale,rotation,smooth(id,AutomationParameters.MASK_RADIUS)/100f,bands,poly,logo);
-        frame.right=new float[bands.length];
+        frame.depth=depthAt(id);frame.right=new float[bands.length];
         if(data!=null&&visualizerStyle[id]>=24&&visualizerStyle[id]<=26){
             if(visualizerStyle[id]<=25){data.pcmAt(framePositionMs,false,bands);data.pcmAt(framePositionMs,true,frame.right);}
             else{data.stereoAt(framePositionMs,false,bands);data.stereoAt(framePositionMs,true,frame.right);}}

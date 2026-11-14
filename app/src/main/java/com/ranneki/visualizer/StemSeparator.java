@@ -16,13 +16,12 @@ final class StemSeparator {
     static final int FFT=4096,HOP=1024,BINS=2049,CORE=96,CONTEXT=32;
     static File[] separate(Context context,Uri input,File directory,AtomicBoolean cancel,PcmAudio.Progress progress)throws Exception{
         if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Penyimpanan stem tidak tersedia");
-        File decoded=new File(directory,"source.wav");File[] output=new File[4];PcmAudio.Writer[] writers=new PcmAudio.Writer[4];OrtSession[] sessions=new OrtSession[4];boolean complete=false;
+        File decoded=new File(directory,"source.wav");File[] output=new File[4];PcmAudio.Writer[] writers=new PcmAudio.Writer[4];File[] models=new File[4];boolean complete=false;
         try{
             progress.update(0,"Membaca audio stereo…");PcmAudio.decode(context,input,decoded,cancel);
             long required=decoded.length()*4+64L*1024*1024;if(directory.getUsableSpace()<required)throw new IOException("Ruang kosong tidak cukup untuk empat stem");
             OrtEnvironment env=OrtEnvironment.getEnvironment();
-            for(int s=0;s<4;s++){PcmAudio.check(cancel);File model=prepareModel(context,NAMES[s]);
-                try(OrtSession.SessionOptions options=new OrtSession.SessionOptions()){options.setIntraOpNumThreads(2);options.setInterOpNumThreads(1);sessions[s]=env.createSession(model.getAbsolutePath(),options);}
+            for(int s=0;s<4;s++){PcmAudio.check(cancel);models[s]=prepareModel(context,NAMES[s]);
                 output[s]=new File(directory,NAMES[s]+".wav");writers[s]=new PcmAudio.Writer(output[s]);}
             float[] window=new float[FFT];for(int i=0;i<FFT;i++)window[i]=(float)(.5-.5*Math.cos(2*Math.PI*i/FFT));
             float[][][] carry=new float[4][2][FFT];float[] weightCarry=new float[FFT];
@@ -36,7 +35,9 @@ final class StemSeparator {
                         if(f>=CONTEXT&&f<CONTEXT+core){real[ch][f-CONTEXT]=re;imag[ch][f-CONTEXT]=im;}}
                     float[][] estimates=new float[4][];
                     try(OnnxTensor tensor=OnnxTensor.createTensor(env,FloatBuffer.wrap(magnitude),new long[]{1,2,BINS,frames})){
-                        for(int s=0;s<4;s++){PcmAudio.check(cancel);try(OrtSession.Result result=sessions[s].run(Collections.singletonMap("magnitude",tensor))){FloatBuffer data=((OnnxTensor)result.get(0)).getFloatBuffer();estimates[s]=new float[data.remaining()];data.get(estimates[s]);}}
+                        for(int s=0;s<4;s++){PcmAudio.check(cancel);try(OrtSession.SessionOptions options=new OrtSession.SessionOptions()){
+                            options.setIntraOpNumThreads(2);options.setInterOpNumThreads(1);options.setCPUArenaAllocator(false);options.setMemoryPatternOptimization(false);
+                            try(OrtSession session=env.createSession(models[s].getAbsolutePath(),options);OrtSession.Result result=session.run(Collections.singletonMap("magnitude",tensor))){FloatBuffer data=((OnnxTensor)result.get(0)).getFloatBuffer();estimates[s]=new float[data.remaining()];data.get(estimates[s]);}}}
                     }
                     float[] norm=new float[block+FFT];System.arraycopy(weightCarry,0,norm,0,FFT);
                     float[][][] mix=new float[4][2][block+FFT];for(int s=0;s<4;s++)for(int ch=0;ch<2;ch++)System.arraycopy(carry[s][ch],0,mix[s][ch],0,FFT);
@@ -56,7 +57,6 @@ final class StemSeparator {
             for(int s=0;s<4;s++){writers[s].close();writers[s]=null;}
             complete=true;progress.update(100,"Empat stem selesai");return output;
         }finally{
-            for(OrtSession s:sessions)if(s!=null)try{s.close();}catch(Exception ignored){}
             for(PcmAudio.Writer w:writers)if(w!=null)try{w.close();}catch(Exception ignored){}
             decoded.delete();if(!complete)for(File f:output)if(f!=null)f.delete();
         }

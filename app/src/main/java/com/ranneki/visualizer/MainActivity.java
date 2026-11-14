@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
     private CanvasGizmoView canvasGizmo;
     private static final int PICK_MIX=120;
     private void showStudio(){
-        String[] items={"Pisahkan audio otomatis + sinkronkan layer","Bagian lagu & Auto Arrange","Kamera & kedalaman (2.5D)","Multitrack audio / suara video","Edit layer di kanvas","Tutup kontrol kanvas","Uji ketahanan preview 5 menit"};
+        String[] items={"Pisahkan audio otomatis + sinkronkan layer","Bagian lagu & Auto Arrange","Kamera perspektif & kedalaman","Multitrack audio / suara video","Edit layer di kanvas","Tutup kontrol kanvas","Uji ketahanan preview 5 menit"};
         new AlertDialog.Builder(this).setTitle("Studio • gerak & audio").setItems(items,(d,w)->{switch(w){case 0:separateAudio();break;case 1:editSections();break;case 2:editCamera();break;case 3:showMixer();break;case 4:selectCanvasLayer();break;case 5:canvasGizmo.select(-1);break;case 6:stressPreview();break;}}).show();
     }
     private void selectCanvasLayer(){int[] ids=reactive.getLayerOrder();String[] names=new String[ids.length];for(int i=0;i<ids.length;i++)names[i]=reactive.getLayerName(ids[i]);new AlertDialog.Builder(this).setTitle("Pilih layer untuk digeser").setItems(names,(d,w)->{if(player!=null&&player.isPlaying()){player.pause();playButton.setText("▶ Play");}canvasGizmo.select(ids[w]);timelineView.setFocusLayer(ids[w]);}).show();}
@@ -94,7 +94,10 @@ public class MainActivity extends Activity {
         addSlider(panel,"Pitch",Math.round(c.pitch+50),v->{c.pitch=v-50;reactive.setCamera(c);});
         addSlider(panel,"Roll",Math.round(c.roll+50),v->{c.roll=v-50;reactive.setCamera(c);});
         addSlider(panel,"Perspektif",Math.round((c.focal-200)/10),v->{c.focal=200+v*10;reactive.setCamera(c);});
-        ScrollView scroll=new ScrollView(this);scroll.addView(panel);new AlertDialog.Builder(this).setTitle("Kamera 2.5D • atur depth tiap layer").setView(scroll).setPositiveButton("Selesai",null).setNeutralButton("Reset",(d,w)->reactive.setCamera(new CameraRig())).show();}
+        addButton(panel,"Gerak kamera otomatis",v->new AlertDialog.Builder(this).setTitle("Gerak kamera").setItems(new String[]{"Diam","Orbit","Dolly","Audio punch"},(d,w)->{c.motion=w;reactive.setCamera(c);}).show());
+        addButton(panel,"Sumber audio kamera",v->new AlertDialog.Builder(this).setTitle("Sumber kamera").setItems(ReactiveView.SOURCES,(d,w)->{c.source=w;reactive.setCamera(c);}).show());
+        addSlider(panel,"Gerak kamera",c.amount,v->{c.amount=v;reactive.setCamera(c);});addSlider(panel,"Laju kamera",c.speed,v->{c.speed=v;reactive.setCamera(c);});
+        ScrollView scroll=new ScrollView(this);scroll.addView(panel);new AlertDialog.Builder(this).setTitle("Kamera 3D • layer gambar datar").setView(scroll).setPositiveButton("Selesai",null).setNeutralButton("Reset",(d,w)->reactive.setCamera(new CameraRig())).show();}
     private void changeAdvanced(int id,java.util.function.Consumer<LayerAdvanced> edit){LayerAdvanced current=reactive.getAdvanced(id);edit.accept(current);reactive.setAdvanced(id,current);}
     private void editLayerStudio(int id){LayerAdvanced a=reactive.getAdvanced(id);LinearLayout panel=dialogPanel();
         addButton(panel,"Geser / putar / ukuran di kanvas",v->{canvasGizmo.select(id);});

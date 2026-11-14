@@ -8,6 +8,7 @@ public final class GpuEffectFrame {
     public static final GpuEffectFrame EMPTY = new GpuEffectFrame(0L,true,new Layer[0]);
     public final long timestampMs;
     public final boolean portrait;
+    CameraRig camera;
     public final Layer[] layers;
     public GpuEffectFrame(long timestampMs, boolean portrait, Layer[] layers) {
         if (timestampMs < 0 || layers == null || layers.length > 48)
@@ -19,6 +20,7 @@ public final class GpuEffectFrame {
         public final int id,type,blend,mask,particleCount;
         public final float power,opacity,size,speed,shiftX,shiftY,scale,rotation,direction,maskRadius;
         public final float[] polygon;
+        float depth;
         public Layer(int id,int type,int blend,int mask,int particleCount,
                 float power,float opacity,float size,float speed,
                 float shiftX,float shiftY,float scale,float rotation,float direction,

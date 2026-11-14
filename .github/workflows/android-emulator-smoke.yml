@@ -52,6 +52,8 @@ jobs:
       - name: Enable hardware virtualization
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Assemble before starting emulator
+        run: gradle :app:assembleDebug --stacktrace --no-daemon --max-workers=2
       - name: Boot emulator and verify H.264/AAC output
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -59,14 +61,18 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -memory 2048 -cores 2 -camera-back none -camera-front none
           disable-animations: true
           script: |
-            gradle :app:assembleDebug --stacktrace --no-daemon
             adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell wm size 540x960
+            adb shell wm density 240
+            adb logcat -c
+            adb logcat -v threadtime > smoke-logcat.txt &
             adb shell am start -n com.ranneki.visualizer/.SmokeTestActivity
-            for attempt in $(seq 1 450); do if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
+            for attempt in $(seq 1 450); do if ! adb get-state >/dev/null 2>&1; then tail -100 smoke-logcat.txt; exit 1; fi; if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
             adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
+            tail -80 smoke-logcat.txt
             grep '^PASS:' smoke-result.txt
             adb shell am start -W -n com.ranneki.visualizer/.MainActivity
             adb shell uiautomator dump /sdcard/studio-ui.xml
@@ -79,6 +85,7 @@ jobs:
           name: emulator-pipeline-report
           path: |
             smoke-result.txt
+            smoke-logcat.txt
             studio-ui.xml
             studio-editor.png
           if-no-files-found: ignore

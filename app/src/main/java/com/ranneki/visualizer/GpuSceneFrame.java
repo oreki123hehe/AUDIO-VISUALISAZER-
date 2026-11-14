@@ -15,6 +15,7 @@ final class GpuSceneFrame {
     final Item[] drawOrder;
     GpuSceneFrame[] shutter=new GpuSceneFrame[0];
     float chromatic=.35f,vignette=.22f;
+    CameraRig camera;
     GpuSceneFrame(GpuEffectFrame effects, Bitmap backdrop, float[] spectrum,
             boolean fastPath, boolean spectrumEnabled, int spectrumScale, float kick, float bass,
             float snare,float treble,float shakeX,float shakeY,String fragmentShader,Item[] drawOrder) {
@@ -51,7 +52,7 @@ final class GpuSceneFrame {
         final float width,height,opacity,shiftX,shiftY,scale,rotation,maskRadius;
         final float[] polygon;
         float[] crop={0,0,1,1};
-        int localShape=0;
+        int localShape=0;float depth;
         Sprite(int id,int type,Bitmap image,VideoFrameLayer video,String text,int color,
                 long timestampMs,long startMs,float width,float height,float opacity,
                 float shiftX,float shiftY,float scale,float rotation,int blend,int mask,
