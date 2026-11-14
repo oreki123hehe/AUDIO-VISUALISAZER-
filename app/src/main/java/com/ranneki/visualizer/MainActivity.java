@@ -100,8 +100,8 @@ public class MainActivity extends Activity {
         addSlider(panel,"Gerak kamera",c.amount,v->{c.amount=v;reactive.setCamera(c);});addSlider(panel,"Laju kamera",c.speed,v->{c.speed=v;reactive.setCamera(c);});
         ScrollView scroll=new ScrollView(this);scroll.addView(panel);new AlertDialog.Builder(this).setTitle("Kamera 3D • layer gambar datar").setView(scroll).setPositiveButton("Selesai",null).setNeutralButton("Reset",(d,w)->reactive.setCamera(new CameraRig())).show();}
     private void changeAdvanced(int id,java.util.function.Consumer<LayerAdvanced> edit){LayerAdvanced current=reactive.getAdvanced(id);edit.accept(current);reactive.setAdvanced(id,current);}
-    private void editLayerStudio(int id){LayerAdvanced a=reactive.getAdvanced(id);LinearLayout panel=dialogPanel();
-        addButton(panel,"Geser / putar / ukuran di kanvas",v->{focusCanvas(id);});
+    private void editLayerStudio(int id){final AlertDialog[] popup=new AlertDialog[1];LayerAdvanced a=reactive.getAdvanced(id);LinearLayout panel=dialogPanel();
+        addButton(panel,"Geser / putar / ukuran di kanvas",v->{popup[0].dismiss();focusCanvas(id);});
         addSlider(panel,"Pivot X",Math.round(a.pivotX/4+50),v->{changeAdvanced(id,current->current.pivotX=(v-50)*4);});
         addSlider(panel,"Pivot Y",Math.round(a.pivotY/7.1f+50),v->{changeAdvanced(id,current->current.pivotY=(v-50)*7.1f);});
         addSlider(panel,"Depth",Math.round((a.depth+400)/16),v->{changeAdvanced(id,current->current.depth=v*16-400);});
@@ -116,7 +116,7 @@ public class MainActivity extends Activity {
         addButton(panel,"Trim / speed / transisi klip",v->editClip(id));
         addButton(panel,"Split pada playhead",v->{int next=reactive.splitLayer(id,currentPosition());if(next<0)toast("Playhead harus berada di dalam klip dan tersedia slot layer");else refreshLayerEditor();});
         addButton(panel,"Join dengan klip berikutnya",v->{if(!reactive.joinLayer(id))toast("Klip hasil split harus berurutan dengan media, gerak, efek dan pengaturan yang sama");else refreshLayerEditor();});
-        ScrollView scroll=new ScrollView(this);scroll.addView(panel);new AlertDialog.Builder(this).setTitle(reactive.getLayerName(id)).setView(scroll).setPositiveButton("Selesai",null).show();}
+        ScrollView scroll=new ScrollView(this);scroll.addView(panel);popup[0]=new AlertDialog.Builder(this).setTitle(reactive.getLayerName(id)).setView(scroll).setPositiveButton("Selesai",null).show();}
     private void drawPath(int id,int kind){LayerAdvanced a=reactive.getAdvanced(id);PathEditorView drawing=new PathEditorView(this,kind==0?a.motionPath:kind==1?a.spectrumPath:kind==2?a.morphPath:null);LinearLayout panel=dialogPanel();panel.addView(drawing,new LinearLayout.LayoutParams(-1,dp(300)));
         new AlertDialog.Builder(this).setTitle(kind==3?"Gambar mask tertutup":"Gambar jalur dari awal ke akhir").setView(panel).setPositiveButton("Pakai",(d,w)->{try{DrawnPath path=drawing.value();LayerAdvanced current=reactive.getAdvanced(id);
             if(kind==0)current.motionPath=path;else if(kind==1){current.spectrumPath=path;reactive.setVisualizerStyle(id,27);}else if(kind==2){current.morphPath=path;reactive.setVisualizerStyle(id,28);}else{float[] points=path.resample(24);StringBuilder b=new StringBuilder();for(int i=0;i<points.length;i+=2){if(i>0)b.append(';');b.append((points[i]+1)/2).append(',').append((points[i+1]+1)/2);}reactive.setPolygonMask(id,b.toString());reactive.setMask(id,4);}reactive.setAdvanced(id,current);refreshLayerEditor();
@@ -669,7 +669,7 @@ public class MainActivity extends Activity {
     }
     private void chooseVisualizerStyle(int id){
         ScrollView scroll=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);scroll.addView(list);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("24 visualizer • pilih bentuk").setView(scroll).setNegativeButton("Tutup",null).create();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(VisualizerMesh.STYLES.length+" visualizer • pilih bentuk").setView(scroll).setNegativeButton("Tutup",null).create();
         for(int group=0;group<VisualizerMesh.GROUPS.length;group++){
             list.addView(text(VisualizerMesh.GROUPS[group],14,PURPLE,true));LinearLayout line=null;int n=0;
             for(int style=0;style<VisualizerMesh.STYLES.length;style++)if(VisualizerMesh.group(style)==group){

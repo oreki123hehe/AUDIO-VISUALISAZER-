@@ -165,6 +165,27 @@ for yy in range(64):
 upload(0x0DE1,0,0x1908,64,64,0,0x1908,0x1401,C.cast(data,P))
 int_uni('uType',100);uni('uAmount',1);uni('uPrevious',-40,0,1,0);draw(5,0,4)
 assert pixel(27,32)[3]>10 and pixel(45,32)[3]==0, ('Motion blur direction',pixel(27,32),pixel(45,32))
+# Compare every specialized effect program against the reference dynamic program.
+reference=p
+def filter_setup(kind):
+    glfn('glUseProgram',None,U)(p)
+    attribute=glfn('glGetAttribLocation',I,U,C.c_char_p)(p,b'aPos')
+    glfn('glEnableVertexAttribArray',None,U)(attribute)
+    glfn('glVertexAttribPointer',None,U,I,U,U,I,P)(attribute,2,0x1406,0,0,C.cast(vertices,P))
+    int_uni('uImage',0);int_uni('uType',kind);uni('uAmount',.37);uni('uTime',.3)
+    uni('uPixel',1/400,1/225);uni('uDesignH',225);uni('uRect',0,0,1,1)
+    uni('uCurrent',0,0,1,0);uni('uPrevious',-40,0,1,0)
+    clear(0x4000);draw(5,0,4)
+    output=(C.c_ubyte*(64*64*4))();read(0,0,64,64,0x1908,0x1401,C.cast(output,P));return bytes(output)
+for kind in list(range(22))+[-1,100,101,102]:
+    p=reference;expected=filter_setup(kind)
+    specialized=shader(0x8B30,java_string('FRAGMENT').replace('uniform int uType;',f'const int uType={kind};'))
+    p=glfn('glCreateProgram',U)();attach(p,v);attach(p,specialized);glfn('glLinkProgram',None,U)(p)
+    glfn('glGetProgramiv',None,U,U,IP)(p,0x8B82,C.byref(linked));assert linked.value, kind
+    actual=filter_setup(kind)
+    assert max(abs(a-b) for a,b in zip(actual,expected))<=2, ('Specialized shader differs',kind)
+    glfn('glDeleteProgram',None,U)(p);glfn('glDeleteShader',None,U)(specialized)
+print('PASS: all 22 specialized effects, temporal accumulation, feather and motion blur match reference pixels')
 print('PASS: geometric logo masks, neutral filters, saturation and transform-based motion-blur trail')
 print('PASS: real GLES shader orientation, premultiplied blending, opacity, logo crop and visualizer shaders')
 assert glfn('glGetError',U)()==0

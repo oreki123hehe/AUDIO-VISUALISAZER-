@@ -61,7 +61,7 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -memory 2048 -cores 2 -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -no-snapshot -memory 2048 -cores 2 -camera-back none -camera-front none
           disable-animations: true
           script: |
             free -h
@@ -72,7 +72,7 @@ jobs:
             adb logcat -c
             adb logcat -v threadtime > smoke-logcat.txt &
             adb shell am start -n com.ranneki.visualizer/.SmokeTestActivity
-            for attempt in $(seq 1 450); do if ! adb get-state >/dev/null 2>&1; then tail -100 smoke-logcat.txt; exit 1; fi; if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
+            for attempt in $(seq 1 450); do if ! adb get-state >/dev/null 2>&1; then grep -E "RANNEKI_|FATAL|Fatal signal|OutOfMemory" smoke-logcat.txt | tail -80; tail -25 smoke-logcat.txt; exit 1; fi; if adb shell run-as com.ranneki.visualizer test -f files/smoke-result.txt; then break; fi; sleep 2; done
             adb shell run-as com.ranneki.visualizer cat files/smoke-result.txt | tee smoke-result.txt
             tail -80 smoke-logcat.txt
             grep '^PASS:' smoke-result.txt

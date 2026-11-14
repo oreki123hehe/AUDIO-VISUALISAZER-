@@ -3,7 +3,7 @@ package com.ranneki.visualizer;
 import android.opengl.GLES20;
 import java.nio.*;
 
-/** Two reusable transparent targets; filters run in user order before final layer blending. */
+/** Three reusable targets; small specialized shader programs are cached per effect. */
 final class GpuLayerFilters implements AutoCloseable {
     private static final String VERTEX="attribute vec2 aPos;varying vec2 uv;void main(){uv=aPos*.5+.5;gl_Position=vec4(aPos,0,1);}";
     private static final String FRAGMENT="precision highp float;varying vec2 uv;uniform sampler2D uImage;"+
@@ -44,11 +44,12 @@ final class GpuLayerFilters implements AutoCloseable {
         "else if(uType==101)c*=uAmount;"+
         "else if(uType==102){vec4 b=blurred(uv);vec3 color=c.a>.99?c.rgb/max(.0001,c.a):b.rgb/max(.0001,b.a);c=vec4(color*b.a,b.a);}"+
         "gl_FragColor=c;}";
-    private final int program;
+    private int program;
+    private final int[] programs=new int[104];
     private final FloatBuffer quad;
     private final int[] textures=new int[3],buffers=new int[3];
     private int width,height,target;private boolean temporal;
-    GpuLayerFilters(){program=GpuSceneRenderer.program(VERTEX,FRAGMENT);quad=ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer();quad.put(new float[]{-1,-1,1,-1,-1,1,1,1}).flip();}
+    GpuLayerFilters(){quad=ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer();quad.put(new float[]{-1,-1,1,-1,-1,1,1,1}).flip();}
     void start(int w,int h){
         int[] previous=new int[1];GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING,previous,0);target=previous[0];
         if(w!=width||h!=height){release();width=w;height=h;
@@ -75,6 +76,9 @@ final class GpuLayerFilters implements AutoCloseable {
         if(blend){GLES20.glEnable(GLES20.GL_BLEND);int mode=type==101?1:item.blend();
             GLES20.glBlendFunc(mode==3?GLES20.GL_DST_COLOR:GLES20.GL_ONE,mode==1?GLES20.GL_ONE:mode==2?GLES20.GL_ONE_MINUS_SRC_COLOR:GLES20.GL_ONE_MINUS_SRC_ALPHA);
         }else GLES20.glDisable(GLES20.GL_BLEND);
+        int slot=type+1;if(slot<0||slot>=programs.length)throw new IllegalArgumentException("Unsupported filter type");
+        if(programs[slot]==0)programs[slot]=GpuSceneRenderer.program(VERTEX,FRAGMENT.replace("uniform int uType;","const int uType="+type+";"));
+        program=programs[slot];
         GLES20.glUseProgram(program);GLES20.glActiveTexture(GLES20.GL_TEXTURE0);GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,texture);
         GLES20.glUniform1i(loc("uImage"),0);GLES20.glUniform1i(loc("uType"),type);GLES20.glUniform1f(loc("uAmount"),amount);
         GLES20.glUniform1f(loc("uTime"),scene.effects.timestampMs/1000f);float h=scene.effects.portrait?711:225;
@@ -85,5 +89,5 @@ final class GpuLayerFilters implements AutoCloseable {
     }
     private int loc(String name){return GLES20.glGetUniformLocation(program,name);}
     private void release(){GLES20.glDeleteTextures(3,textures,0);GLES20.glDeleteFramebuffers(3,buffers,0);java.util.Arrays.fill(textures,0);java.util.Arrays.fill(buffers,0);}
-    public void close(){release();GLES20.glDeleteProgram(program);}
+    public void close(){release();for(int shader:programs)if(shader!=0)GLES20.glDeleteProgram(shader);java.util.Arrays.fill(programs,0);program=0;}
 }
