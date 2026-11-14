@@ -81,6 +81,7 @@ jobs:
             adb pull /sdcard/studio-ui.xml studio-ui.xml
             adb shell screencap -p /sdcard/studio-editor.png
             adb pull /sdcard/studio-editor.png studio-editor.png
+            python tools/android_ui_check.py
       - name: Diagnose runner resources
         if: failure()
         run: |
@@ -97,4 +98,6 @@ jobs:
             smoke-logcat.txt
             studio-ui.xml
             studio-editor.png
+            studio-canvas.png
+            studio-timeline.png
           if-no-files-found: ignore

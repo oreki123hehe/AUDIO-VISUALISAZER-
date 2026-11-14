@@ -32,7 +32,7 @@ Attached logos stay upright, center-crop to the selected shape, and inherit thei
 - Nine automatic motion presets plus Off: Kick Punch, Spring Zoom, Bounce Zoom, Float, Orbit, Spin, Sway, Beat Tilt and Cinematic Drift.
 - Layer parenting and invisible control/null layers. Cycles are rejected; arbitrary pivot points affect rotation and scaling.
 - Finger-drawn motion paths with loop, ping-pong or one-shot playback, easing and optional tangent-following rotation. Splitting a clip preserves its motion phase.
-- Canvas controls pause playback for editing: drag position, use corner/rotation handles, or switch to **PIVOT** to place the anchor. Position dragging accounts for camera perspective and parent transforms. Existing parameter slider bounds still apply.
+- Canvas controls pause playback for editing: drag position, use corner/rotation handles, or switch to **PIVOT** to place the anchor. Canvas mode expands the preview and provides an **Editor** return button; opening the timeline replaces the inspector to keep the preview visible on small screens. Position dragging accounts for camera perspective and parent transforms. Existing parameter slider bounds still apply.
 - Camera X/Y/Z, yaw, pitch, roll and focal distance project flat layer planes at independent depths. Orbit, dolly and audio-punch camera motion are available. This is perspective composition of 2D artwork, not a 3D mesh/model editor.
 - Draw closed masks and adjust feathering. Feathering softens the rendered alpha edge, including artwork edges.
 

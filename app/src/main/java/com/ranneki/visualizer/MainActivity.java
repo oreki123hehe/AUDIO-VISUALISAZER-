@@ -45,12 +45,19 @@ public class MainActivity extends Activity {
     private boolean studioBusy;
     private AudioMixProject audioMix=new AudioMixProject();
     private CanvasGizmoView canvasGizmo;
+    private ScrollView inspectorScroll;
+    private Button canvasDone,timelineToggle;
+    private boolean canvasEditing;
     private static final int PICK_MIX=120;
     private void showStudio(){
         String[] items={"Pisahkan audio otomatis + sinkronkan layer","Bagian lagu & Auto Arrange","Kamera perspektif & kedalaman","Multitrack audio / suara video","Edit layer di kanvas","Tutup kontrol kanvas","Uji ketahanan preview 5 menit"};
-        new AlertDialog.Builder(this).setTitle("Studio • gerak & audio").setItems(items,(d,w)->{switch(w){case 0:separateAudio();break;case 1:editSections();break;case 2:editCamera();break;case 3:showMixer();break;case 4:selectCanvasLayer();break;case 5:canvasGizmo.select(-1);break;case 6:stressPreview();break;}}).show();
+        new AlertDialog.Builder(this).setTitle("Studio • gerak & audio").setItems(items,(d,w)->{switch(w){case 0:separateAudio();break;case 1:editSections();break;case 2:editCamera();break;case 3:showMixer();break;case 4:selectCanvasLayer();break;case 5:closeCanvas();break;case 6:stressPreview();break;}}).show();
     }
-    private void focusCanvas(int id){if(player!=null&&player.isPlaying()){player.pause();playButton.setText("▶ Play");}canvasGizmo.select(id);}
+    private void focusCanvas(int id){if(!reactive.isAllocated(id))return;if(player!=null&&player.isPlaying()){player.pause();playButton.setText("▶ Play");}canvasEditing=true;inspectorScroll.setVisibility(View.GONE);timelineView.setVisibility(View.GONE);timelineToggle.setText("▤ Timeline ▸");canvasDone.setVisibility(View.VISIBLE);canvasDone.post(()->canvasDone.requestRectangleOnScreen(new android.graphics.Rect(0,0,canvasDone.getWidth(),canvasDone.getHeight()),true));canvasGizmo.select(id);}
+    private void closeCanvas(){canvasEditing=false;canvasGizmo.select(-1);canvasDone.setVisibility(View.GONE);inspectorScroll.setVisibility(timelineView.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);}
+    @Override public void onBackPressed(){if(canvasEditing){closeCanvas();return;}super.onBackPressed();}
+    private void resizeEditorPanels(){if(inspectorScroll==null)return;int h=(int)(getResources().getDisplayMetrics().heightPixels/getResources().getDisplayMetrics().density);inspectorScroll.getLayoutParams().height=dp(Math.max(100,Math.min(240,(int)(h*.28f))));timelineView.getLayoutParams().height=dp(Math.max(100,Math.min(240,(int)(h*.30f))));inspectorScroll.requestLayout();timelineView.requestLayout();}
+    @Override public void onConfigurationChanged(android.content.res.Configuration c){super.onConfigurationChanged(c);resizeEditorPanels();}
     private void selectCanvasLayer(){int[] ids=reactive.getLayerOrder();String[] names=new String[ids.length];for(int i=0;i<ids.length;i++)names[i]=reactive.getLayerName(ids[i]);new AlertDialog.Builder(this).setTitle("Pilih layer untuk digeser").setItems(names,(d,w)->{if(player!=null&&player.isPlaying()){player.pause();playButton.setText("▶ Play");}focusCanvas(ids[w]);timelineView.setFocusLayer(ids[w]);}).show();}
     private void separateAudio(){
         if(musicUri==null){toast("Impor lagu dulu");return;}if(studioBusy){toast("Pemrosesan audio masih berjalan");return;}
@@ -273,6 +280,7 @@ public class MainActivity extends Activity {
             ratioButton.setText(reactive.isPortrait()?"9:16":"16:9");
         });
         addButton(commandsRow,"✦ Studio+",v->showStudio());
+        canvasDone=addButton(commandsRow,"↩ Editor",v->closeCanvas());canvasDone.setVisibility(View.GONE);
         addButton(commandsRow,"✦ Template",v->chooseTemplate());
         addButton(commandsRow,"＋ Visualizer",v->addVisualizer());
         addButton(commandsRow,"◉ Logo",v->chooseLogoTarget());
@@ -333,10 +341,11 @@ public class MainActivity extends Activity {
         });
         LinearLayout timelineHeader=row();
         timelineView.setVisibility(View.GONE);
-        Button timelineToggle=addButton(timelineHeader,"▤ Timeline ▸",v->{});
+        timelineToggle=addButton(timelineHeader,"▤ Timeline ▸",v->{});
         timelineToggle.setOnClickListener(v->{
+            if(canvasEditing)closeCanvas();
             boolean show=timelineView.getVisibility()!=View.VISIBLE;
-            timelineView.setVisibility(show?View.VISIBLE:View.GONE);
+            timelineView.setVisibility(show?View.VISIBLE:View.GONE);inspectorScroll.setVisibility(show?View.GONE:View.VISIBLE);
             timelineToggle.setText(show?"▤ Timeline ▾":"▤ Timeline ▸");
         });
         addButton(timelineHeader,"−",v->timelineView.setZoom(timelineView.getZoom()/2));
@@ -365,7 +374,7 @@ public class MainActivity extends Activity {
         controls.setOrientation(LinearLayout.VERTICAL);
         controls.setPadding(dp(3),dp(5),dp(3),dp(24));
         scroll.addView(controls);
-        root.addView(scroll,new LinearLayout.LayoutParams(-1,dp(260)));
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,dp(180)));inspectorScroll=scroll;resizeEditorPanels();
         TextView section=text("AUDIO REACTIVE  •  CUSTOM FX",13,PURPLE,true);
         controls.addView(section);
         effectContainer=controls;
